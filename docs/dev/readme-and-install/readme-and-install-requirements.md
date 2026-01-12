@@ -62,12 +62,12 @@
 
 | ID | 功能点 | 验收步骤 | 优先级 | 关联任务 | 通过 |
 |----|--------|----------|--------|----------|------|
-| F-001 | README: 快速开始区 | 1. 打开 README 2. 确认首屏有一键安装命令 | P0 | T-001 | ☐ |
-| F-002 | README: 多平台指南 | 1. 确认包含 Linux/macOS/Windows 安装说明 | P0 | T-001 | ☐ |
-| F-003 | install.sh: 平台检测 | 1. 在 Linux x86_64 运行 2. 确认下载 linux-amd64 包 | P0 | T-002 | ☐ |
-| F-004 | install.sh: 文件安装 | 1. 运行脚本 2. 验证 /usr/local/bin/quick-share 存在且可执行 | P0 | T-002 | ☐ |
-| F-005 | install.ps1: 文件下载 | 1. 运行 PS 脚本 2. 确认 exe 下载成功 | P0 | T-003 | ☐ |
-| F-006 | install.ps1: PATH配置 | 1. 运行 PS 脚本 2. 确认 User PATH 包含安装目录 | P0 | T-003 | ☐ |
+| F-001 | README: 快速开始区 | 1. 打开 README 2. 确认首屏有一键安装命令 | P0 | T-003 | ✅ |
+| F-002 | README: 多平台指南 | 1. 确认包含 Linux/macOS/Windows 安装说明 | P0 | T-003 | ✅ |
+| F-003 | install.sh: 平台检测 | 1. 在 Linux x86_64 运行 2. 确认下载 linux-amd64 包 | P0 | T-001 | ✅ |
+| F-004 | install.sh: 文件安装 | 1. 运行脚本 2. 验证 /usr/local/bin/quick-share 存在且可执行 | P0 | T-001 | ✅ |
+| F-005 | install.ps1: 文件下载 | 1. 运行 PS 脚本 2. 确认 exe 下载成功 | P0 | T-002 | ✅ |
+| F-006 | install.ps1: PATH配置 | 1. 运行 PS 脚本 2. 确认 User PATH 包含安装目录 | P0 | T-002 | ✅ |
 
 ## 5. 技术约束与要求
 

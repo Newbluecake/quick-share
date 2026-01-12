@@ -1,51 +1,139 @@
 # Quick Share
 
-快速启动HTTP服务分享单个文件，自动生成适合 curl/wget 的下载链接。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 功能特性
+A lightweight command-line tool to quickly share a single file over HTTP. It automatically generates download links (curl/wget) for the receiver and shuts down after usage limits are met.
 
-- 🚀 **一键启动**: 单个命令即可启动HTTP服务并分享文件
-- 🌐 **自动检测IP**: 自动检测局域网IP地址，无需手动查找
-- 🔌 **智能端口**: 默认8000端口，冲突时自动递增
-- 🔒 **安全限制**: 仅允许下载指定文件，防止路径遍历攻击
-- 📋 **便捷复制**: 自动生成 curl/wget 下载命令
-- ⏱️ **自动停止**: 支持下载次数和运行时长限制
-- 📊 **实时日志**: 显示下载进度和访问记录
+## 🚀 Quick Start
 
-## 快速开始
+Get started instantly with a single command.
 
+**Linux / macOS**
 ```bash
-# 分享文件（默认配置：10次下载或5分钟后自动停止）
-quick-share /path/to/file.zip
-
-# 自定义配置
-quick-share file.zip -n 3 -t 10m -p 9000
+curl -fsSL https://github.com/Newbluecake/quick-share/raw/master/install.sh | bash
 ```
 
-## 使用场景
-
-- 服务器间快速传输文件
-- 临时分享日志文件给同事
-- 快速分享构建产物
-- 局域网内设备间文件共享
-
-## 开发状态
-
-当前项目处于需求澄清阶段，已完成：
-
-- ✅ 需求简报 (Brief)
-- ✅ 完整需求文档 (Requirements)
-
-## 下一步
-
-查看完整需求文档：
-- [Quick Share - 需求简报](docs/dev/quick-share/quick-share-brief.md)
-- [Quick Share - 需求文档](docs/dev/quick-share/quick-share-requirements.md)
-
-开始实施开发：
-```bash
-/dev:spec-dev quick-share --skip-requirements
+**Windows (PowerShell)**
+```powershell
+iwr -useb https://github.com/Newbluecake/quick-share/raw/master/install.ps1 | iex
 ```
+
+## ✨ Features
+
+- **⚡ Instant Sharing**: Share a file with one command. No configuration needed.
+- **🌐 Auto IP Detection**: Automatically finds your machine's LAN IP address.
+- **🔒 Secure**: Exposes *only* the specific file you chose. No directory access.
+- **⏳ Auto-Stop**: Server automatically stops after a set number of downloads or time limit.
+- **📋 Ready-to-Use Links**: Generates `curl` and `wget` commands for easy copying.
+- **📊 Live Monitoring**: Shows real-time download progress and logs.
+
+## 📦 Installation
+
+### Linux & macOS
+
+The automatic installer will download the correct binary for your system (x86_64 or arm64) and place it in your path (e.g., `/usr/local/bin` or `~/.local/bin`).
+
+```bash
+curl -fsSL https://github.com/Newbluecake/quick-share/raw/master/install.sh | bash
+```
+
+### Windows
+
+The installation script downloads `quick-share.exe` and adds it to your User PATH.
+
+1. Open PowerShell.
+2. Run the following command:
+   ```powershell
+   iwr -useb https://github.com/Newbluecake/quick-share/raw/master/install.ps1 | iex
+   ```
+3. Restart your terminal to refresh the PATH.
+
+## 💡 Usage
+
+### Basic Sharing
+Share a file with default settings (Max 10 downloads, 5 minutes timeout):
+
+```bash
+quick-share document.pdf
+```
+
+*Output example:*
+```text
+Sharing: document.pdf
+Size: 2.5 MB
+--------------------------------------------------
+Download Link: http://192.168.1.10:8000/document.pdf
+
+Command for receiver:
+  wget http://192.168.1.10:8000/document.pdf
+  curl -O http://192.168.1.10:8000/document.pdf
+--------------------------------------------------
+Limits: 10 downloads or 5m timeout
+Press Ctrl+C to stop sharing manually
+```
+
+### Custom Limits
+Share a file allowing only **3 downloads** and keep server alive for **10 minutes**:
+
+```bash
+quick-share data.zip -n 3 -t 10m
+```
+
+### Custom Port
+Share using a specific port (e.g., 9090):
+
+```bash
+quick-share image.png -p 9090
+```
+
+### Full Options
+
+```text
+usage: quick-share [-h] [-p PORT] [-n MAX_DOWNLOADS] [-t TIMEOUT] file_path
+
+positional arguments:
+  file_path             Path to the file to share
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -p PORT, --port PORT  Port to listen on (1024-65535)
+  -n MAX_DOWNLOADS      Maximum number of downloads allowed (default: 10)
+  -t TIMEOUT            Timeout duration (e.g., 30s, 5m, 1h) (default: 5m)
+```
+
+## 🛠️ Development
+
+Instructions for building from source or contributing.
+
+### Prerequisites
+- Python 3.8+
+- pip
+
+### Build from Source
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Newbluecake/quick-share.git
+   cd quick-share
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
+   ```
+
+3. **Run tests**
+   ```bash
+   pytest
+   ```
+
+4. **Build executable**
+   Use the provided build script to create a standalone binary:
+   ```bash
+   ./build.sh
+   ```
+   The executable will be generated in the `dist/` directory.
 
 ## License
 
