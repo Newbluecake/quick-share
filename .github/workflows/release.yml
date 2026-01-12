@@ -25,7 +25,7 @@ jobs:
             binary_name: quick-share-windows.exe
           - os: macos
             arch: amd64
-            runner: macos-13
+            runner: macos-12
             binary_name: quick-share-macos-amd64
           - os: macos
             arch: arm64

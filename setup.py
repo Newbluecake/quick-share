@@ -10,7 +10,7 @@ long_description = readme_file.read_text(encoding="utf-8") if readme_file.exists
 
 setup(
     name="quick-share",
-    version="1.0.1",
+    version="1.0.2",
     description="Fast file sharing via HTTP server with automatic LAN IP detection",
     long_description=long_description,
     long_description_content_type="text/markdown",
