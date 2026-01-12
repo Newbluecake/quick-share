@@ -95,8 +95,9 @@ def main() -> None:
         # Start server and wait for completion
         try:
             server.start()
-            if server.server_thread:
-                server.server_thread.join()
+            # Use timeout loop to allow Ctrl+C to work immediately
+            while server.server_thread and server.server_thread.is_alive():
+                server.server_thread.join(timeout=0.5)
         except KeyboardInterrupt:
             print("\nStopping server...")
             server.stop()
