@@ -3,11 +3,11 @@ import os
 from pathlib import Path
 from typing import Tuple
 
-from cli import parse_arguments, validate_arguments
-from network import get_local_ip
-from server import FileShareServer, find_available_port
-from utils import format_file_size, parse_duration
-import logger
+from .cli import parse_arguments, validate_arguments
+from .network import get_local_ip
+from .server import FileShareServer, find_available_port
+from .utils import format_file_size, parse_duration
+from . import logger
 
 def validate_file(file_path: str) -> Tuple[Path, int]:
     """
