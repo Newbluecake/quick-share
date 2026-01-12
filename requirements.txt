@@ -1,0 +1,2 @@
+# Quick Share - Runtime Dependencies
+# Using only Python standard library - no external dependencies required

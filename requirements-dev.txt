@@ -1,0 +1,6 @@
+# Quick Share - Development Dependencies
+pytest>=7.0.0
+pytest-cov>=3.0.0
+pytest-timeout>=2.0.0
+requests>=2.28.0  # For integration tests
+pyinstaller>=5.0.0  # For packaging
