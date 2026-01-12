@@ -15,22 +15,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: linux
-            arch: amd64
-            runner: ubuntu-latest
-            binary_name: quick-share-linux-amd64
           - os: windows
             arch: amd64
             runner: windows-latest
             binary_name: quick-share-windows.exe
-          - os: macos
-            arch: amd64
-            runner: macos-12
-            binary_name: quick-share-macos-amd64
-          - os: macos
-            arch: arm64
-            runner: macos-14
-            binary_name: quick-share-macos-arm64
 
     steps:
       - uses: actions/checkout@v4

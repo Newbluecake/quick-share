@@ -31,15 +31,20 @@ iwr -useb https://github.com/Newbluecake/quick-share/raw/master/install.ps1 | ie
 
 ### Linux & macOS
 
-The automatic installer will download the correct binary for your system (x86_64 or arm64) and place it in your path (e.g., `/usr/local/bin` or `~/.local/bin`).
+The automatic installer uses pip to install Quick Share from GitHub. Python 3.8+ is required.
 
 ```bash
 curl -fsSL https://github.com/Newbluecake/quick-share/raw/master/install.sh | bash
 ```
 
+Or install directly with pip:
+```bash
+pip install git+https://github.com/Newbluecake/quick-share.git
+```
+
 ### Windows
 
-The installation script downloads `quick-share.exe` and adds it to your User PATH.
+The installation script downloads `quick-share.exe` and adds it to your User PATH. No Python required.
 
 1. Open PowerShell.
 2. Run the following command:
@@ -47,6 +52,11 @@ The installation script downloads `quick-share.exe` and adds it to your User PAT
    iwr -useb https://github.com/Newbluecake/quick-share/raw/master/install.ps1 | iex
    ```
 3. Restart your terminal to refresh the PATH.
+
+Alternatively, if you have Python installed:
+```powershell
+pip install git+https://github.com/Newbluecake/quick-share.git
+```
 
 ## 💡 Usage
 
