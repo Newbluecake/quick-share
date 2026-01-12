@@ -1,5 +1,6 @@
 import argparse
 import re
+from . import __version__
 
 def parse_arguments(args=None):
     """
@@ -12,6 +13,12 @@ def parse_arguments(args=None):
         argparse.Namespace: Parsed arguments.
     """
     parser = argparse.ArgumentParser(description="Quick Share - A simple file sharing CLI tool.")
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"quick-share {__version__}"
+    )
 
     parser.add_argument(
         "file_path",
