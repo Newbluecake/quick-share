@@ -189,6 +189,6 @@ main() {
 }
 
 # Run main function only if script is executed (not sourced for testing)
-if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+if ! (return 0 2>/dev/null); then
     main "$@"
 fi
