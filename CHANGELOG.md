@@ -5,6 +5,14 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-01-14
+
+### Fixed
+- Fixed critical bug in directory zip download causing curl/wget failures with "Illegal or missing hexadecimal sequence" error
+- Removed improper Transfer-Encoding: chunked header (was not correctly implemented)
+- Added exception handling for client disconnections during zip streaming
+- Fixed path validation logic for RESTful zip download URLs (/download/{name}.zip)
+
 ## [1.0.6] - 2026-01-14
 
 ### Changed
@@ -45,5 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basename-only file access enforcement
 - No directory listing exposure
 
+[1.0.7]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.7
 [1.0.6]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.6
 [1.0.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.0
