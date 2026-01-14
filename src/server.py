@@ -165,7 +165,28 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         else:
             self.session_id = None
 
-        # Validate path
+        # Check if requesting zip download (before path validation)
+        # For RESTful format (/download/{name}.zip), we need to validate root path
+        if self._is_zip_download_request():
+            # For RESTful zip URLs, validate the root directory instead
+            if self.path.startswith('/download/') and self.path.endswith('.zip'):
+                # Validate root directory
+                is_valid, real_path = validate_directory_path('/', directory_path)
+            else:
+                # For query parameter format, validate the actual path
+                is_valid, real_path = validate_directory_path(
+                    self.path,
+                    directory_path
+                )
+
+            if not is_valid:
+                self.send_error(403, "Access denied")
+                return
+
+            self._serve_directory_zip(directory_path, real_path)
+            return
+
+        # Validate path for non-zip requests
         is_valid, real_path = validate_directory_path(
             self.path,
             directory_path
@@ -173,11 +194,6 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
 
         if not is_valid:
             self.send_error(403, "Access denied")
-            return
-
-        # Check if requesting zip download
-        if self._is_zip_download_request():
-            self._serve_directory_zip(directory_path, real_path)
             return
 
         # Determine if path is a file or directory
@@ -244,11 +260,16 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         self._set_session_cookie_if_needed()
         self.send_header('Content-Type', 'application/zip')
         self.send_header('Content-Disposition', f'attachment; filename="{zip_filename}"')
-        self.send_header('Transfer-Encoding', 'chunked')
+        # Don't set Transfer-Encoding or Content-Length
+        # Let the connection close naturally after streaming
         self.end_headers()
 
         # Stream zip to client
-        stream_directory_as_zip(self.wfile, base_dir, target_dir)
+        try:
+            stream_directory_as_zip(self.wfile, base_dir, target_dir)
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected - this is normal, ignore it
+            pass
 
     def _set_session_cookie_if_needed(self):
         """Set session cookie header if we have a session_id."""
