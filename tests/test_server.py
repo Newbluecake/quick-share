@@ -561,6 +561,8 @@ class TestSessionTracking(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         handler = self.create_directory_handler(server_obj.httpd)
 
@@ -603,6 +605,8 @@ class TestSessionTracking(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         handler = self.create_directory_handler(server_obj.httpd)
         handler.headers = {'Cookie': f'quick_share_session={session_id}'}
@@ -628,9 +632,11 @@ class TestSessionTracking(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         # Verify that session_lock is a threading.Lock
-        self.assertIsInstance(server_obj.session_lock, threading.Lock)
+        self.assertIsInstance(server_obj.session_lock, type(threading.Lock()))
 
         handler = self.create_directory_handler(server_obj.httpd)
 
@@ -654,6 +660,8 @@ class TestSessionTracking(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         handler = self.create_directory_handler(server_obj.httpd)
         handler.headers = {'User-Agent': 'Mozilla/5.0'}
@@ -717,6 +725,8 @@ class TestSessionLimitEnforcement(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         # New client trying to connect
         handler = self.create_directory_handler(server_obj.httpd)
@@ -761,6 +771,8 @@ class TestSessionLimitEnforcement(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         # Existing client with valid session cookie
         handler = self.create_directory_handler(server_obj.httpd)
@@ -796,6 +808,8 @@ class TestSessionLimitEnforcement(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         # New client
         handler = self.create_directory_handler(server_obj.httpd)
@@ -823,9 +837,11 @@ class TestSessionLimitEnforcement(unittest.TestCase):
         server_obj.httpd.session_lock = server_obj.session_lock
         server_obj.httpd.max_sessions = server_obj.max_sessions
         server_obj.httpd.directory_path = server_obj.directory_path
+        server_obj.httpd.track_session = server_obj.track_session
+        server_obj.httpd._extract_session_id_from_cookie = server_obj._extract_session_id_from_cookie
 
         # Verify that session_lock is a threading.Lock
-        self.assertIsInstance(server_obj.session_lock, threading.Lock)
+        self.assertIsInstance(server_obj.session_lock, type(threading.Lock()))
 
         handler = self.create_directory_handler(server_obj.httpd)
 

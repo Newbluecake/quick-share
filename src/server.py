@@ -4,7 +4,7 @@ import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from typing import Optional
+from typing import Optional, Tuple
 
 try:
     from .security import validate_request_path, validate_directory_path
@@ -153,6 +153,18 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         """Handle GET requests: directory listing, file download, or zip download."""
         directory_path = self.server.directory_path
 
+        # Track session and enforce limit
+        if hasattr(self.server, 'sessions'):
+            # Session tracking is enabled
+            allowed, session_id = self.server.track_session(self)
+            if not allowed:
+                self.send_error(403, "Session limit reached")
+                return
+            # Store session_id for cookie setting
+            self.session_id = session_id
+        else:
+            self.session_id = None
+
         # Validate path
         is_valid, real_path = validate_directory_path(
             self.path,
@@ -184,6 +196,7 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         html_bytes = html.encode('utf-8')
 
         self.send_response(200)
+        self._set_session_cookie_if_needed()
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(html_bytes)))
         self.end_headers()
@@ -205,6 +218,7 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         file_size = os.path.getsize(file_path)
 
         self.send_response(200)
+        self._set_session_cookie_if_needed()
         self.send_header('Content-Type', 'application/octet-stream')
         self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
         self.send_header('Content-Length', str(file_size))
@@ -224,6 +238,7 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         zip_filename = f"{dir_name}.zip"
 
         self.send_response(200)
+        self._set_session_cookie_if_needed()
         self.send_header('Content-Type', 'application/zip')
         self.send_header('Content-Disposition', f'attachment; filename="{zip_filename}"')
         self.send_header('Transfer-Encoding', 'chunked')
@@ -231,6 +246,11 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
 
         # Stream zip to client
         stream_directory_as_zip(self.wfile, base_dir, target_dir)
+
+    def _set_session_cookie_if_needed(self):
+        """Set session cookie header if we have a session_id."""
+        if hasattr(self, 'session_id') and self.session_id:
+            self.send_header('Set-Cookie', f'quick_share_session={self.session_id}; Path=/; HttpOnly')
 
     def log_message(self, format, *args):
         """Suppress default logging."""
@@ -269,12 +289,69 @@ class DirectoryShareServer:
         self.server_thread: Optional[threading.Thread] = None
         self.shutdown_timer: Optional[threading.Timer] = None
 
+    def track_session(self, request_handler) -> Tuple[bool, Optional[str]]:
+        """
+        Track session and return whether access is allowed.
+
+        Args:
+            request_handler: HTTP request handler instance
+
+        Returns:
+            Tuple of (allowed: bool, session_id: Optional[str])
+        """
+        import uuid
+        import time
+
+        with self.session_lock:
+            # Get or create session ID from cookie
+            cookie_header = request_handler.headers.get('Cookie', '')
+            session_id = self._extract_session_id_from_cookie(cookie_header)
+
+            # Check if this is an existing session
+            if session_id and session_id in self.sessions:
+                # Existing session - always allow
+                return True, session_id
+
+            # New session - check limit
+            if len(self.sessions) >= self.max_sessions:
+                return False, None
+
+            # Create new session
+            if not session_id:
+                session_id = str(uuid.uuid4())
+
+            self.sessions[session_id] = {
+                'ip': request_handler.client_address[0],
+                'created_at': time.time(),
+                'user_agent': request_handler.headers.get('User-Agent', 'Unknown')
+            }
+
+            return True, session_id
+
+    def _extract_session_id_from_cookie(self, cookie_header: str) -> Optional[str]:
+        """Extract session ID from Cookie header."""
+        if not cookie_header:
+            return None
+
+        for part in cookie_header.split(';'):
+            part = part.strip()
+            if part.startswith('quick_share_session='):
+                return part.split('=', 1)[1]
+
+        return None
+
     def start(self):
         """Start the server in a background thread."""
         self.httpd = ThreadingHTTPServer(('', self.port), DirectoryShareHandler)
 
-        # Inject directory info into server instance so handler can access it
+        # Inject directory info and session management into server instance
         self.httpd.directory_path = self.directory_path
+        self.httpd.sessions = self.sessions
+        self.httpd.session_lock = self.session_lock
+        self.httpd.max_sessions = self.max_sessions
+        # Inject track_session method so handler can call it
+        self.httpd.track_session = self.track_session
+        self.httpd._extract_session_id_from_cookie = self._extract_session_id_from_cookie
 
         self.server_thread = threading.Thread(target=self.httpd.serve_forever)
         self.server_thread.daemon = True
