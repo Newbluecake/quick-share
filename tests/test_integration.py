@@ -2,6 +2,7 @@
 import pytest
 import sys
 import os
+import io
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import time
@@ -108,14 +109,25 @@ def test_real_file_validation_integration(tmp_path):
             main()
         assert exc_info.value.code == 1
 
-    # Test with directory instead of file
+    # Test with directory - should now work (directory sharing is supported)
     test_dir = tmp_path / "test_directory"
     test_dir.mkdir()
 
+    # Directory sharing should succeed (not raise SystemExit)
     with patch('sys.argv', ['quick-share', str(test_dir)]):
-        with pytest.raises(SystemExit) as exc_info:
-            main()
-        assert exc_info.value.code == 1
+        with patch('src.main.DirectoryShareServer') as mock_server_cls:
+            mock_server = MagicMock()
+            mock_server.server_thread = None
+            mock_server_cls.return_value = mock_server
+
+            with patch('sys.stdout', io.StringIO()):
+                try:
+                    main()
+                except KeyboardInterrupt:
+                    pass  # Expected for graceful shutdown
+
+            # Verify DirectoryShareServer was used
+            mock_server_cls.assert_called_once()
 
 
 def test_network_error_handling(tmp_path):
