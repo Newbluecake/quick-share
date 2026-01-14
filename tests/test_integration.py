@@ -7,9 +7,7 @@ from unittest.mock import patch, MagicMock
 import time
 import threading
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-
-from main import main
+from src.main import main
 
 
 def test_full_application_flow(tmp_path):
@@ -19,9 +17,10 @@ def test_full_application_flow(tmp_path):
     test_file.write_text("Integration test content")
 
     # Mock server start to avoid actually starting HTTP server
-    with patch('main.FileShareServer') as mock_server_class:
+    with patch('src.main.FileShareServer') as mock_server_class:
         server_instance = MagicMock()
-        server_instance.server_thread = None
+        server_instance.server_thread = MagicMock()
+        server_instance.server_thread.is_alive.return_value = False
         mock_server_class.return_value = server_instance
 
         # Simulate command line arguments
@@ -55,7 +54,7 @@ def test_application_with_defaults(tmp_path):
     test_file = tmp_path / "default_test.txt"
     test_file.write_text("Default test")
 
-    with patch('main.FileShareServer') as mock_server_class:
+    with patch('src.main.FileShareServer') as mock_server_class:
         server_instance = MagicMock()
         server_instance.server_thread = None
         mock_server_class.return_value = server_instance
@@ -83,7 +82,7 @@ def test_keyboard_interrupt_during_server(tmp_path):
     test_file = tmp_path / "interrupt_test.txt"
     test_file.write_text("Interrupt test")
 
-    with patch('main.FileShareServer') as mock_server_class:
+    with patch('src.main.FileShareServer') as mock_server_class:
         server_instance = MagicMock()
 
         # Simulate KeyboardInterrupt when start is called
@@ -125,14 +124,14 @@ def test_network_error_handling(tmp_path):
     test_file.write_text("Network test")
 
     # Test when IP detection fails
-    with patch('main.get_local_ip', side_effect=RuntimeError("No network")):
+    with patch('src.main.get_local_ip', side_effect=RuntimeError("No network")):
         with patch('sys.argv', ['quick-share', str(test_file)]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 1
 
     # Test when port allocation fails
-    with patch('main.find_available_port', side_effect=RuntimeError("No ports")):
+    with patch('src.main.find_available_port', side_effect=RuntimeError("No ports")):
         with patch('sys.argv', ['quick-share', str(test_file)]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
@@ -151,7 +150,7 @@ def test_various_timeout_formats(tmp_path):
     ]
 
     for timeout_str, expected_minutes in test_cases:
-        with patch('main.FileShareServer') as mock_server_class:
+        with patch('src.main.FileShareServer') as mock_server_class:
             server_instance = MagicMock()
             server_instance.server_thread = None
             mock_server_class.return_value = server_instance
