@@ -188,7 +188,10 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
 
     def _is_zip_download_request(self) -> bool:
         """Check if the request is for zip download."""
-        return '?download=zip' in self.path or '?action=zip' in self.path
+        # Support both query parameter format and RESTful path format
+        return ('?download=zip' in self.path or
+                '?action=zip' in self.path or
+                self.path.startswith('/download/') and self.path.endswith('.zip'))
 
     def _serve_directory_listing(self, base_dir: str, current_dir: str):
         """Generate and return directory listing HTML."""

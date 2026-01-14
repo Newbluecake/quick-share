@@ -316,6 +316,41 @@ class TestDirectoryShareHandler(unittest.TestCase):
         finally:
             shutil.rmtree(tmp_path)
 
+    def test_directory_handler_zip_restful_url(self, tmp_path=None):
+        """Test DirectoryShareHandler handles RESTful zip download URL format"""
+        import tempfile
+        import shutil
+        import io
+
+        tmp_path = tempfile.mkdtemp()
+        try:
+            test_dir = os.path.join(tmp_path, "shared")
+            os.makedirs(test_dir)
+            test_file = os.path.join(test_dir, "file1.txt")
+            with open(test_file, 'w') as f:
+                f.write("content1")
+
+            mock_server = MagicMock(spec=['directory_path'])
+            mock_server.directory_path = test_dir
+
+            handler = self.create_directory_handler(mock_server)
+            # Test RESTful URL format: /download/shared.zip
+            handler.path = "/download/shared.zip"
+            handler.wfile = io.BytesIO()
+
+            with patch('server.validate_directory_path', return_value=(True, test_dir)):
+                with patch('server.stream_directory_as_zip') as mock_zip:
+                    handler.do_GET()
+
+            # Verify zip download response
+            handler.send_response.assert_called_with(200)
+            handler.send_header.assert_any_call('Content-Type', 'application/zip')
+            handler.send_header.assert_any_call('Content-Disposition',
+                                                unittest.mock.ANY)
+            mock_zip.assert_called_once()
+        finally:
+            shutil.rmtree(tmp_path)
+
     def test_directory_handler_invalid_path(self):
         """Test DirectoryShareHandler denies access to invalid paths"""
         mock_server = MagicMock(spec=['directory_path'])

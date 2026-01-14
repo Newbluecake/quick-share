@@ -19,6 +19,40 @@ def test_format_startup_message():
     assert str(max_downloads) in msg
     assert str(timeout) in msg
 
+def test_format_startup_message_directory():
+    """Test that directory shares show the RESTful download URL format."""
+    ip = "192.168.1.100"
+    port = 8000
+    dirname = "my-docs"
+    file_size = "Directory"  # Special marker for directories
+    max_downloads = 10
+    timeout = 300
+
+    msg = format_startup_message(ip, port, dirname, file_size, max_downloads, timeout)
+
+    # Should show RESTful URL format for directories
+    assert f"http://{ip}:{port}/download/{dirname}.zip" in msg
+    assert "curl" in msg
+    assert "wget" in msg
+    # Should not contain QR code text
+    assert "QR code" not in msg
+    assert "Scan" not in msg.lower() or "scan" not in msg.lower()
+
+def test_format_startup_message_no_qr_code():
+    """Test that QR code references are removed from output."""
+    ip = "192.168.1.100"
+    port = 8000
+    filename = "test.txt"
+    file_size = "1.2 MB"
+    max_downloads = 10
+    timeout = 300
+
+    msg = format_startup_message(ip, port, filename, file_size, max_downloads, timeout)
+
+    # Should not contain QR code text
+    assert "QR code" not in msg
+    assert "Scan QR" not in msg
+
 def test_format_download_log():
     timestamp = "2026-01-12 14:30:25"
     client_ip = "192.168.1.101"

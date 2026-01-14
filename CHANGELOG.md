@@ -5,6 +5,18 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-01-14
+
+### Changed
+- Directory sharing now uses RESTful URL format: `http://IP:PORT/download/DIR_NAME.zip`
+- Updated wget/curl command examples to match the new URL format
+
+### Removed
+- Removed "Scan QR code to download:" output (QR code functionality was never implemented)
+
+### Fixed
+- Fixed directory download URL format to be more intuitive and RESTful
+
 ## [1.0.0] - 2026-01-12
 
 ### Added
@@ -33,4 +45,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basename-only file access enforcement
 - No directory listing exposure
 
+[1.0.6]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.6
 [1.0.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.0

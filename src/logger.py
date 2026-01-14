@@ -2,7 +2,13 @@ def format_startup_message(ip: str, port: int, filename: str, file_size: str, ma
     """
     Format the startup message with server details and download commands.
     """
-    url = f"http://{ip}:{port}/{filename}"
+    # Check if this is a directory share (file_size will be "Directory")
+    is_directory = (file_size == "Directory")
+
+    if is_directory:
+        url = f"http://{ip}:{port}/download/{filename}.zip"
+    else:
+        url = f"http://{ip}:{port}/{filename}"
 
     # Using triple quotes for cleaner multi-line string
     msg = [
@@ -14,9 +20,7 @@ def format_startup_message(ip: str, port: int, filename: str, file_size: str, ma
         "",
         "Download commands:",
         f"  wget {url}",
-        f"  curl -O {url}",
-        "",
-        "Scan QR code to download:"
+        f"  curl -O {url}"
     ]
     return "\n".join(msg)
 
