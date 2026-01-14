@@ -229,7 +229,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
                 f.write("content")
 
             # Mock server
-            mock_server = MagicMock()
+            mock_server = MagicMock(spec=['directory_path'])
             mock_server.directory_path = test_dir
 
             # Create handler
@@ -266,7 +266,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
             with open(test_file, 'w') as f:
                 f.write("download content")
 
-            mock_server = MagicMock()
+            mock_server = MagicMock(spec=['directory_path'])
             mock_server.directory_path = test_dir
 
             handler = self.create_directory_handler(mock_server)
@@ -296,7 +296,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
             with open(test_file, 'w') as f:
                 f.write("content1")
 
-            mock_server = MagicMock()
+            mock_server = MagicMock(spec=['directory_path'])
             mock_server.directory_path = test_dir
 
             handler = self.create_directory_handler(mock_server)
@@ -318,7 +318,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
 
     def test_directory_handler_invalid_path(self):
         """Test DirectoryShareHandler denies access to invalid paths"""
-        mock_server = MagicMock()
+        mock_server = MagicMock(spec=['directory_path'])
         mock_server.directory_path = "/tmp/test"
 
         handler = self.create_directory_handler(mock_server)
@@ -343,7 +343,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
             with open(test_file, 'wb') as f:
                 f.write(b'x' * 20000)  # 20KB file
 
-            mock_server = MagicMock()
+            mock_server = MagicMock(spec=['directory_path'])
             mock_server.directory_path = test_dir
 
             handler = self.create_directory_handler(mock_server)
@@ -369,7 +369,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
             subdir = os.path.join(test_dir, "subdir")
             os.makedirs(subdir)
 
-            mock_server = MagicMock()
+            mock_server = MagicMock(spec=['directory_path'])
             mock_server.directory_path = test_dir
 
             handler = self.create_directory_handler(mock_server)
