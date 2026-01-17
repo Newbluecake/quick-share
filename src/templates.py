@@ -206,7 +206,7 @@ def generate_spa_html(base_dir_name: str) -> str:
                 <span style="color: #888; font-weight: normal;">/ {html.escape(base_dir_name)}</span>
             </div>
             <div class="actions">
-                <a href="/" class="btn">Legacy View</a>
+                <a href="/?legacy=1" class="btn">Legacy View</a>
                 <a href="/?download=zip" class="btn">Download ZIP</a>
             </div>
         </header>
