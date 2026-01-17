@@ -2,16 +2,17 @@ import socket
 import os
 import threading
 import time
+import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Optional, Tuple
 
 try:
     from .security import validate_request_path, validate_directory_path
-    from .directory_handler import generate_directory_listing_html, stream_directory_as_zip
+    from .directory_handler import generate_directory_listing_html, stream_directory_as_zip, get_directory_structure, generate_spa_html
 except ImportError:
     from security import validate_request_path, validate_directory_path
-    from directory_handler import generate_directory_listing_html, stream_directory_as_zip
+    from directory_handler import generate_directory_listing_html, stream_directory_as_zip, get_directory_structure, generate_spa_html
 
 # Constants
 CHUNK_SIZE = 8192  # 8KB chunks for file streaming
@@ -165,6 +166,11 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         else:
             self.session_id = None
 
+        # Handle API requests
+        if self.path.startswith('/api/'):
+            self._handle_api_request()
+            return
+
         # Check if requesting zip download (before path validation)
         # For RESTful format (/download/{name}.zip), we need to validate root path
         if self._is_zip_download_request():
@@ -202,6 +208,126 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         else:
             self._serve_directory_listing(directory_path, real_path)
 
+    def _handle_api_request(self):
+        """Handle JSON API requests."""
+        from urllib.parse import urlparse, parse_qs
+
+        parsed_path = urlparse(self.path)
+        query_params = parse_qs(parsed_path.query)
+
+        # Simple routing for now
+        if parsed_path.path == '/api/tree':
+            # Get path from query params, default to root
+            request_path = query_params.get('path', ['/'])[0]
+
+            # Validate path
+            is_valid, real_path = validate_directory_path(
+                request_path,
+                self.server.directory_path
+            )
+
+            if not is_valid:
+                self._send_json_error(403, "Access denied")
+                return
+
+            if not os.path.exists(real_path):
+                self._send_json_error(404, "Path not found")
+                return
+
+            if not os.path.isdir(real_path):
+                self._send_json_error(400, "Path is not a directory")
+                return
+
+            try:
+                data = get_directory_structure(self.server.directory_path, real_path)
+                self._send_json_response(data)
+            except Exception as e:
+                self._send_json_error(500, str(e))
+
+        elif parsed_path.path == '/api/content':
+            # Get path from query params
+            request_path = query_params.get('path', [''])[0]
+            if not request_path:
+                self._send_json_error(400, "Missing path parameter")
+                return
+
+            # Validate path
+            is_valid, real_path = validate_directory_path(
+                request_path,
+                self.server.directory_path
+            )
+
+            if not is_valid:
+                self._send_json_error(403, "Access denied")
+                return
+
+            if not os.path.exists(real_path):
+                self._send_json_error(404, "File not found")
+                return
+
+            if not os.path.isfile(real_path):
+                self._send_json_error(400, "Path is not a file")
+                return
+
+            # Check size limit (1MB)
+            try:
+                file_size = os.path.getsize(real_path)
+                if file_size > 1024 * 1024:  # 1MB
+                    self._send_json_error(413, "File too large for preview (max 1MB)")
+                    return
+            except OSError:
+                self._send_json_error(500, "Error reading file info")
+                return
+
+            # Read content
+            try:
+                with open(real_path, 'rb') as f:
+                    content_bytes = f.read()
+
+                # Try decode as utf-8
+                try:
+                    content_str = content_bytes.decode('utf-8')
+                    import mimetypes
+                    mime_type, _ = mimetypes.guess_type(real_path)
+
+                    data = {
+                        'path': request_path,
+                        'content': content_str,
+                        'size': file_size,
+                        'encoding': 'utf-8',
+                        'type': mime_type or 'text/plain'
+                    }
+                    self._send_json_response(data)
+                except UnicodeDecodeError:
+                    self._send_json_error(415, "Binary file not supported for preview")
+                    return
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self._send_json_error(500, str(e))
+        else:
+            self._send_json_error(404, "API Endpoint Not Found")
+
+    def _send_json_response(self, data: dict, status: int = 200):
+        """Send a JSON response."""
+        response_body = json.dumps(data).encode('utf-8')
+
+        self.send_response(status)
+        self._set_session_cookie_if_needed()
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def _send_json_error(self, status: int, message: str):
+        """Send a JSON error response."""
+        data = {
+            'error': message,
+            'status': status
+        }
+        self._send_json_response(data, status)
+
     def _is_zip_download_request(self) -> bool:
         """Check if the request is for zip download."""
         # Support both query parameter format and RESTful path format
@@ -211,7 +337,15 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
 
     def _serve_directory_listing(self, base_dir: str, current_dir: str):
         """Generate and return directory listing HTML."""
-        html = generate_directory_listing_html(base_dir, current_dir)
+        # Check for legacy view toggle (server config or query param)
+        use_legacy = getattr(self.server, 'legacy_mode', False) or '?legacy=1' in self.path
+
+        if use_legacy:
+            html = generate_directory_listing_html(base_dir, current_dir)
+        else:
+            # Serve SPA
+            html = generate_spa_html(os.path.basename(base_dir))
+
         html_bytes = html.encode('utf-8')
 
         self.send_response(200)
@@ -289,7 +423,8 @@ class DirectoryShareServer:
         directory_path: str,
         port: Optional[int] = None,
         timeout_minutes: int = 30,
-        max_sessions: int = 10
+        max_sessions: int = 10,
+        legacy_mode: bool = False
     ):
         """
         Initialize DirectoryShareServer.
@@ -299,11 +434,13 @@ class DirectoryShareServer:
             port: Port to bind to (None for auto-select)
             timeout_minutes: Minutes before auto-shutdown
             max_sessions: Maximum number of concurrent sessions
+            legacy_mode: If True, use legacy server-side rendering by default
         """
         self.directory_path = os.path.abspath(directory_path)
         self.port = find_available_port(custom_port=port) if port else find_available_port()
         self.timeout_minutes = timeout_minutes
         self.max_sessions = max_sessions
+        self.legacy_mode = legacy_mode
 
         # Session management (to be implemented in later tasks)
         self.sessions = {}
@@ -373,6 +510,7 @@ class DirectoryShareServer:
         self.httpd.sessions = self.sessions
         self.httpd.session_lock = self.session_lock
         self.httpd.max_sessions = self.max_sessions
+        self.httpd.legacy_mode = self.legacy_mode
         # Inject track_session method so handler can call it
         self.httpd.track_session = self.track_session
         self.httpd._extract_session_id_from_cookie = self._extract_session_id_from_cookie

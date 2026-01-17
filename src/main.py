@@ -175,7 +175,8 @@ def main() -> None:
                 directory_path=str(resolved_path),
                 port=port,
                 timeout_minutes=server_timeout_minutes,
-                max_sessions=args.max_downloads  # Reuse max_downloads as max_sessions
+                max_sessions=args.max_downloads,  # Reuse max_downloads as max_sessions
+                legacy_mode=args.legacy
             )
 
             # Print startup message for directory

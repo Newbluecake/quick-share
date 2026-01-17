@@ -44,6 +44,12 @@ def parse_arguments(args=None):
         help="Timeout duration (e.g., 30s, 5m, 1h) (default: 5m)"
     )
 
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Use legacy server-side rendered directory listing"
+    )
+
     return parser.parse_args(args)
 
 def validate_arguments(args):

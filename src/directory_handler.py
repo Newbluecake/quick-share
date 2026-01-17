@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Dict
 from datetime import datetime
 
+try:
+    from .templates import generate_spa_html
+except ImportError:
+    from templates import generate_spa_html
+
 
 def get_directory_info(directory_path: str) -> Dict:
     """
@@ -43,6 +48,51 @@ def get_directory_info(directory_path: str) -> Dict:
         'total_files': total_files,
         'total_dirs': total_dirs,
         'total_size': total_size
+    }
+
+
+def get_directory_structure(base_dir: str, current_dir: str) -> Dict:
+    """
+    Get directory structure as a dictionary.
+
+    Args:
+        base_dir: Shared root directory
+        current_dir: Current directory being listed
+
+    Returns:
+        Dictionary with path info and items list
+    """
+    # Calculate relative path
+    relative_path = os.path.relpath(current_dir, base_dir)
+    if relative_path == '.':
+        relative_path = '/'
+    else:
+        relative_path = '/' + relative_path
+
+    items = []
+    try:
+        for entry in os.scandir(current_dir):
+            try:
+                stat = entry.stat(follow_symlinks=False)
+                items.append({
+                    'name': entry.name,
+                    'type': 'directory' if entry.is_dir() else 'file',
+                    'size': stat.st_size if entry.is_file() else 0,
+                    'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+                })
+            except (OSError, PermissionError):
+                continue
+    except PermissionError:
+        # Return empty list or specific error structure?
+        # For now, let's return what we have (empty) and handle errors at caller if needed
+        pass
+
+    # Sort: directories first, then by name
+    items.sort(key=lambda x: (x['type'] != 'directory', x['name'].lower()))
+
+    return {
+        'path': relative_path,
+        'items': items
     }
 
 

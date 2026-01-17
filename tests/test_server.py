@@ -215,7 +215,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
             return handler
 
     def test_directory_handler_listing_response(self, tmp_path=None):
-        """T-008: Test DirectoryShareHandler returns directory listing"""
+        """T-008: Test DirectoryShareHandler returns legacy directory listing"""
         import tempfile
         import shutil
 
@@ -229,12 +229,13 @@ class TestDirectoryShareHandler(unittest.TestCase):
                 f.write("content")
 
             # Mock server
-            mock_server = MagicMock(spec=['directory_path'])
+            mock_server = MagicMock(spec=['directory_path', 'legacy_mode'])
             mock_server.directory_path = test_dir
+            mock_server.legacy_mode = False # Default is false
 
             # Create handler
             handler = self.create_directory_handler(mock_server)
-            handler.path = "/"
+            handler.path = "/?legacy=1" # Request legacy view
 
             # Mock validate_directory_path
             with patch('server.validate_directory_path', return_value=(True, test_dir)):
@@ -250,6 +251,41 @@ class TestDirectoryShareHandler(unittest.TestCase):
             written_data = b''.join(call.args[0] for call in handler.wfile.write.call_args_list)
             html_content = written_data.decode('utf-8')
             self.assertIn('file.txt', html_content)
+        finally:
+            shutil.rmtree(tmp_path)
+
+    def test_directory_handler_spa_response(self):
+        """T-008: Test DirectoryShareHandler returns SPA by default"""
+        import tempfile
+        import shutil
+
+        tmp_path = tempfile.mkdtemp()
+        try:
+            test_dir = os.path.join(tmp_path, "shared")
+            os.makedirs(test_dir)
+
+            mock_server = MagicMock(spec=['directory_path', 'legacy_mode'])
+            mock_server.directory_path = test_dir
+            mock_server.legacy_mode = False
+
+            handler = self.create_directory_handler(mock_server)
+            handler.path = "/"
+
+            with patch('server.validate_directory_path', return_value=(True, test_dir)):
+                 # We don't mock generate_spa_html because we want to see if it calls it,
+                 # but since it imports it, we might want to verify the content contains SPA markers.
+                 # Or better, mock it to distinguish from legacy.
+                 with patch('server.generate_spa_html', return_value='<html>SPA-VIEW</html>') as mock_spa:
+                    handler.do_GET()
+                    mock_spa.assert_called_once()
+
+            # Verify response
+            handler.send_response.assert_called_with(200)
+
+            written_data = b''.join(call.args[0] for call in handler.wfile.write.call_args_list)
+            html_content = written_data.decode('utf-8')
+            self.assertIn('SPA-VIEW', html_content)
+
         finally:
             shutil.rmtree(tmp_path)
 
