@@ -43,3 +43,7 @@ htmlcov/
 
 # Distribution
 *.spec
+
+# Logs
+*.log
+logs/
