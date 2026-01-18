@@ -5,6 +5,11 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.10] - 2026-01-18
+
+### Fixed
+- Fixed directory tree scrolling issue in SPA view (now scrolls independently from preview)
+
 ## [1.0.9] - 2026-01-18
 
 ### Changed

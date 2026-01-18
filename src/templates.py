@@ -102,9 +102,9 @@ def generate_spa_html(base_dir_name: str) -> str:
             width: var(--sidebar-width);
             background: var(--sidebar-bg);
             border-right: 1px solid var(--border-color);
-            overflow-y: auto;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }}
 
         .sidebar-header {{
@@ -113,10 +113,13 @@ def generate_spa_html(base_dir_name: str) -> str:
             font-weight: bold;
             color: #666;
             font-size: 0.8rem;
+            flex-shrink: 0;
         }}
 
         .file-tree {{
             padding: 10px;
+            flex: 1;
+            overflow-y: auto;
         }}
 
         .tree-item {{
