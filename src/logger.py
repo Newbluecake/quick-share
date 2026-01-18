@@ -6,22 +6,36 @@ def format_startup_message(ip: str, port: int, filename: str, file_size: str, ma
     is_directory = (file_size == "Directory")
 
     if is_directory:
-        url = f"http://{ip}:{port}/download/{filename}.zip"
+        base_url = f"http://{ip}:{port}/"
+        download_url = f"http://{ip}:{port}/download/{filename}.zip"
+
+        msg = [
+            "Share started!",
+            f"File: {filename} ({file_size})",
+            f"Browse: {base_url}",
+            f"Zip URL: {download_url}",
+            f"Max downloads: {max_downloads}",
+            f"Timeout: {timeout} seconds",
+            "",
+            "Download commands:",
+            f"  wget {download_url}",
+            f"  curl -O {download_url}"
+        ]
     else:
         url = f"http://{ip}:{port}/{filename}"
 
-    # Using triple quotes for cleaner multi-line string
-    msg = [
-        "Share started!",
-        f"File: {filename} ({file_size})",
-        f"URL: {url}",
-        f"Max downloads: {max_downloads}",
-        f"Timeout: {timeout} seconds",
-        "",
-        "Download commands:",
-        f"  wget {url}",
-        f"  curl -O {url}"
-    ]
+        msg = [
+            "Share started!",
+            f"File: {filename} ({file_size})",
+            f"URL: {url}",
+            f"Max downloads: {max_downloads}",
+            f"Timeout: {timeout} seconds",
+            "",
+            "Download commands:",
+            f"  wget {url}",
+            f"  curl -O {url}"
+        ]
+
     return "\n".join(msg)
 
 def format_download_log(timestamp: str, client_ip: str, method: str, path: str, status_code: int, current_count: int, max_count: int) -> str:

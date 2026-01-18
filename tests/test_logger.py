@@ -30,8 +30,10 @@ def test_format_startup_message_directory():
 
     msg = format_startup_message(ip, port, dirname, file_size, max_downloads, timeout)
 
+    # Should show Browse URL
+    assert f"Browse: http://{ip}:{port}/" in msg
     # Should show RESTful URL format for directories
-    assert f"http://{ip}:{port}/download/{dirname}.zip" in msg
+    assert f"Zip URL: http://{ip}:{port}/download/{dirname}.zip" in msg
     assert "curl" in msg
     assert "wget" in msg
     # Should not contain QR code text
