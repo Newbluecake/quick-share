@@ -1,9 +1,27 @@
 import urllib.parse
+from typing import List, Tuple, Optional
 
 
-def format_startup_message(ip: str, port: int, filename: str, file_size: str, max_downloads: int, timeout: int) -> str:
+def format_startup_message(
+    ip: str,
+    port: int,
+    filename: str,
+    file_size: str,
+    max_downloads: int,
+    timeout: int,
+    all_ips: Optional[List[Tuple[str, str]]] = None
+) -> str:
     """
     Format the startup message with server details and download commands.
+
+    Args:
+        ip: Primary IP address
+        port: Server port
+        filename: Name of the file/directory being shared
+        file_size: Human-readable file size or "Directory"
+        max_downloads: Maximum number of downloads allowed
+        timeout: Timeout in seconds
+        all_ips: Optional list of (interface_name, ip) tuples for multi-IP display
     """
     # Check if this is a directory share (file_size will be "Directory")
     is_directory = (file_size == "Directory")
@@ -11,36 +29,52 @@ def format_startup_message(ip: str, port: int, filename: str, file_size: str, ma
     # URL encode the filename for use in URLs (handles Chinese and special characters)
     encoded_filename = urllib.parse.quote(filename, safe='')
 
-    if is_directory:
-        base_url = f"http://{ip}:{port}/"
-        download_url = f"http://{ip}:{port}/download/{encoded_filename}.zip"
+    msg = [
+        "Share started!",
+        f"File: {filename} ({file_size})",
+    ]
 
-        msg = [
-            "Share started!",
-            f"File: {filename} ({file_size})",
-            f"Browse: {base_url}",
-            f"Zip URL: {download_url}",
-            f"Max downloads: {max_downloads}",
-            f"Timeout: {timeout} seconds",
-            "",
-            "Download commands:",
-            f"  wget '{download_url}'",
-            f"  curl -O '{download_url}'"
-        ]
+    # Build URL(s) section
+    if all_ips and len(all_ips) > 1:
+        # Multiple IPs: show all with interface names
+        msg.append("")
+        msg.append("Available URLs:")
+        for iface, iface_ip in all_ips:
+            if is_directory:
+                url = f"http://{iface_ip}:{port}/"
+            else:
+                url = f"http://{iface_ip}:{port}/{encoded_filename}"
+            msg.append(f"  {iface:12} {url}")
+    else:
+        # Single IP: simple format
+        if is_directory:
+            base_url = f"http://{ip}:{port}/"
+            msg.append(f"Browse: {base_url}")
+        else:
+            url = f"http://{ip}:{port}/{encoded_filename}"
+            msg.append(f"URL: {url}")
+
+    # Add zip URL for directories
+    if is_directory:
+        download_url = f"http://{ip}:{port}/download/{encoded_filename}.zip"
+        msg.append(f"Zip URL: {download_url}")
+
+    msg.extend([
+        f"Max downloads: {max_downloads}",
+        f"Timeout: {timeout} seconds",
+        "",
+        "Download commands:",
+    ])
+
+    # Generate download commands using primary IP
+    if is_directory:
+        download_url = f"http://{ip}:{port}/download/{encoded_filename}.zip"
+        msg.append(f"  wget '{download_url}'")
+        msg.append(f"  curl -O '{download_url}'")
     else:
         url = f"http://{ip}:{port}/{encoded_filename}"
-
-        msg = [
-            "Share started!",
-            f"File: {filename} ({file_size})",
-            f"URL: {url}",
-            f"Max downloads: {max_downloads}",
-            f"Timeout: {timeout} seconds",
-            "",
-            "Download commands:",
-            f"  wget '{url}'",
-            f"  curl -O '{url}'"
-        ]
+        msg.append(f"  wget '{url}'")
+        msg.append(f"  curl -O '{url}'")
 
     return "\n".join(msg)
 

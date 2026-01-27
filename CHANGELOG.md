@@ -5,6 +5,16 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12] - 2026-01-27
+
+### Added
+- Multi-IP detection: display all available LAN IPs with interface names
+- Virtual network filtering: automatically exclude Docker, VirtualBox, VMware, WSL, and container bridge interfaces
+- Cross-platform support for IP detection (Linux, macOS, Windows)
+
+### Changed
+- Improved startup message to show all available URLs when multiple network interfaces are detected
+
 ## [1.0.11] - 2026-01-27
 
 ### Fixed
@@ -80,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basename-only file access enforcement
 - No directory listing exposure
 
+[1.0.12]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.12
 [1.0.11]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.11
 [1.0.10]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.10
 [1.0.9]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.9

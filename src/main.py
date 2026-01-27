@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Tuple, Optional
 
 from .cli import parse_arguments, validate_arguments
-from .network import get_local_ip
+from .network import get_local_ip, get_all_lan_ips
 from .server import FileShareServer, DirectoryShareServer, find_available_port
 from .utils import format_file_size, parse_duration
 from . import logger
@@ -136,6 +136,9 @@ def main() -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
+        # Get all available LAN IPs (for multi-IP display)
+        all_ips = get_all_lan_ips()
+
         # Determine port
         try:
             port = find_available_port(custom_port=args.port)
@@ -165,7 +168,8 @@ def main() -> None:
                 filename=resolved_path.name,
                 file_size=format_file_size(file_size_bytes),
                 max_downloads=args.max_downloads,
-                timeout=timeout_seconds
+                timeout=timeout_seconds,
+                all_ips=all_ips
             )
             print(msg)
 
@@ -186,7 +190,8 @@ def main() -> None:
                 filename=resolved_path.name,
                 file_size="Directory",  # No size for directories
                 max_downloads=args.max_downloads,
-                timeout=timeout_seconds
+                timeout=timeout_seconds,
+                all_ips=all_ips
             )
             print(msg)
 
