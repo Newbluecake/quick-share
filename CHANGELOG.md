@@ -5,6 +5,12 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.11] - 2026-01-27
+
+### Fixed
+- URL encode Chinese filenames in download commands for wget/curl compatibility
+- Wrap download commands in single quotes for shell safety with special characters
+
 ## [1.0.10] - 2026-01-18
 
 ### Fixed
@@ -74,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basename-only file access enforcement
 - No directory listing exposure
 
+[1.0.11]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.11
+[1.0.10]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.10
+[1.0.9]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.9
+[1.0.8]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.8
 [1.0.7]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.7
 [1.0.6]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.6
 [1.0.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.0
