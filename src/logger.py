@@ -1,3 +1,6 @@
+import urllib.parse
+
+
 def format_startup_message(ip: str, port: int, filename: str, file_size: str, max_downloads: int, timeout: int) -> str:
     """
     Format the startup message with server details and download commands.
@@ -5,9 +8,12 @@ def format_startup_message(ip: str, port: int, filename: str, file_size: str, ma
     # Check if this is a directory share (file_size will be "Directory")
     is_directory = (file_size == "Directory")
 
+    # URL encode the filename for use in URLs (handles Chinese and special characters)
+    encoded_filename = urllib.parse.quote(filename, safe='')
+
     if is_directory:
         base_url = f"http://{ip}:{port}/"
-        download_url = f"http://{ip}:{port}/download/{filename}.zip"
+        download_url = f"http://{ip}:{port}/download/{encoded_filename}.zip"
 
         msg = [
             "Share started!",
@@ -18,11 +24,11 @@ def format_startup_message(ip: str, port: int, filename: str, file_size: str, ma
             f"Timeout: {timeout} seconds",
             "",
             "Download commands:",
-            f"  wget {download_url}",
-            f"  curl -O {download_url}"
+            f"  wget '{download_url}'",
+            f"  curl -O '{download_url}'"
         ]
     else:
-        url = f"http://{ip}:{port}/{filename}"
+        url = f"http://{ip}:{port}/{encoded_filename}"
 
         msg = [
             "Share started!",
@@ -32,8 +38,8 @@ def format_startup_message(ip: str, port: int, filename: str, file_size: str, ma
             f"Timeout: {timeout} seconds",
             "",
             "Download commands:",
-            f"  wget {url}",
-            f"  curl -O {url}"
+            f"  wget '{url}'",
+            f"  curl -O '{url}'"
         ]
 
     return "\n".join(msg)
