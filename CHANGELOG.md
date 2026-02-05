@@ -5,6 +5,33 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-05
+
+### Added
+- **Real-time download progress tracking** - Console now displays live download progress with detailed information
+  - ⬇️ Download start notification with client IP, filename, and file size
+  - ⬇️ Real-time progress updates (transferred bytes/total bytes + percentage)
+  - ✅ Completion notification with total bytes transferred and duration
+  - ⚠️ Interruption notification when client disconnects
+  - ❌ Error messages for failed downloads
+- Progress logging for all file downloads (single files and directory ZIPs)
+- Thread-safe progress tracking with per-connection instances
+- Optimized logging frequency (every 80KB) to avoid I/O overhead
+- Support for concurrent downloads with independent progress tracking (10+ connections)
+- Graceful error handling for client disconnections (BrokenPipeError, ConnectionResetError)
+- Emoji indicators for visual feedback (⬇️ ✅ ⚠️ ❌)
+
+### Changed
+- Enhanced file streaming with progress callback integration
+- Enhanced ZIP streaming with approximate progress tracking based on file sizes
+- Improved directory size calculation (inline tree walking instead of non-existent utility)
+
+### Fixed
+- Fixed directory ZIP download progress tracking by calculating size inline
+
+[1.2.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.2.0
+[1.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.1.0
+
 ## [1.1.0] - 2026-02-05
 
 ### Added
@@ -21,7 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `handle_symlink()` function for symlink-specific logic
 - Improved error handling in `main()` for symlink-specific error types
 
-[1.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.1.0
 [1.0.13]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.13
 
 ### Added
@@ -118,7 +144,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basename-only file access enforcement
 - No directory listing exposure
 
-[1.0.13]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.13
 [1.0.12]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.12
 [1.0.11]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.11
 [1.0.10]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.10
