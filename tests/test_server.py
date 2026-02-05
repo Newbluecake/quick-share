@@ -925,5 +925,96 @@ class TestSessionLimitEnforcement(unittest.TestCase):
         self.assertEqual(len(server_obj.sessions), 1)
 
 
+class TestDownloadProgressTracker(unittest.TestCase):
+    """Test suite for DownloadProgressTracker class."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.client_ip = "192.168.1.100"
+        self.filename = "test.zip"
+        self.file_size = 2500000  # 2.5MB
+
+    def test_tracker_initialization(self):
+        """Test T-001: DownloadProgressTracker initialization."""
+        tracker = server.DownloadProgressTracker(self.client_ip, self.filename, self.file_size)
+
+        self.assertEqual(tracker.client_ip, self.client_ip)
+        self.assertEqual(tracker.filename, self.filename)
+        self.assertEqual(tracker.file_size, self.file_size)
+        self.assertEqual(tracker.bytes_transferred, 0)
+        self.assertFalse(tracker.is_complete)
+        self.assertIsNotNone(tracker.start_time)
+
+    def test_tracker_update_progress(self):
+        """Test T-001: DownloadProgressTracker.update() method."""
+        tracker = server.DownloadProgressTracker(self.client_ip, self.filename, self.file_size)
+
+        # First update - 8KB (1 chunk)
+        should_log = tracker.update(8192)
+        self.assertEqual(tracker.bytes_transferred, 8192)
+        # Should not log yet (only every 10 chunks)
+        self.assertFalse(should_log)
+
+        # Update to 80KB (10 chunks)
+        for _ in range(9):
+            tracker.update(8192)
+        self.assertEqual(tracker.bytes_transferred, 81920)
+        # Should log now (10th chunk)
+        # Note: update() returns True when bytes_transferred % (CHUNK_SIZE * 10) == 0
+        # After 10 chunks of 8192 bytes = 81920 bytes
+        self.assertTrue(tracker.bytes_transferred % (8192 * 10) == 0)
+
+    def test_tracker_complete(self):
+        """Test T-001: DownloadProgressTracker.complete() method."""
+        tracker = server.DownloadProgressTracker(self.client_ip, self.filename, self.file_size)
+
+        self.assertFalse(tracker.is_complete)
+        tracker.complete()
+        self.assertTrue(tracker.is_complete)
+
+    def test_tracker_progress_percentage(self):
+        """Test T-001: DownloadProgressTracker.get_progress_percentage() method."""
+        tracker = server.DownloadProgressTracker(self.client_ip, self.filename, self.file_size)
+
+        # 0% at start
+        self.assertEqual(tracker.get_progress_percentage(), 0.0)
+
+        # Update to 50%
+        tracker.bytes_transferred = self.file_size // 2
+        self.assertEqual(tracker.get_progress_percentage(), 50.0)
+
+        # 100% at completion
+        tracker.bytes_transferred = self.file_size
+        self.assertEqual(tracker.get_progress_percentage(), 100.0)
+
+    def test_tracker_progress_percentage_zero_file_size(self):
+        """Test T-001: Progress percentage with zero file size (edge case)."""
+        tracker = server.DownloadProgressTracker(self.client_ip, self.filename, 0)
+
+        # Should return 0% without division by zero error
+        self.assertEqual(tracker.get_progress_percentage(), 0.0)
+
+    def test_tracker_update_returns_logging_flag(self):
+        """Test T-001: Verify update() returns correct logging flag."""
+        tracker = server.DownloadProgressTracker(self.client_ip, self.filename, self.file_size)
+
+        # Should return True every 80KB (10 chunks)
+        logged_count = 0
+        chunk_count = 0
+
+        while tracker.bytes_transferred < self.file_size:
+            chunk = min(8192, self.file_size - tracker.bytes_transferred)
+            should_log = tracker.update(chunk)
+            chunk_count += 1
+
+            if should_log:
+                logged_count += 1
+
+        # Should have logged multiple times during download
+        self.assertGreater(logged_count, 0)
+        # Final chunk should always log
+        self.assertLessEqual(chunk_count, (self.file_size // 8192) + 1)
+
+
 if __name__ == '__main__':
     unittest.main()

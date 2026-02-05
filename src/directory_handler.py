@@ -249,16 +249,55 @@ def generate_error_html(error_message: str) -> str:
 def stream_directory_as_zip(
     output_stream,
     base_dir: str,
-    target_dir: str
+    target_dir: str,
+    progress_callback=None
 ) -> None:
     """
-    Stream directory as zip file.
+    Stream directory as zip file with optional progress callback.
 
     Args:
         output_stream: Output stream (HTTP response wfile)
         base_dir: Shared root directory
         target_dir: Target directory to zip (may be subdirectory)
+        progress_callback: Optional callback function for progress tracking
     """
+    try:
+        from .logger import (
+            format_download_start,
+            format_download_progress,
+            format_download_complete,
+            get_timestamp
+        )
+    except ImportError:
+        from logger import (
+            format_download_start,
+            format_download_progress,
+            format_download_complete,
+            get_timestamp
+        )
+
+    import time
+
+    if progress_callback:
+        # Calculate total directory size (not accurate for compressed zip, but good enough for progress)
+        total_size = 0
+        for root, dirs, files in os.walk(target_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    total_size += os.path.getsize(file_path)
+                except OSError:
+                    pass
+
+        client_ip = "unknown"  # Not available in this context
+        dir_name = os.path.basename(base_dir)
+        timestamp = get_timestamp()
+
+        print(format_download_start(timestamp, client_ip, f"{dir_name}.zip", format_file_size(total_size)))
+
+        start_time = time.time()
+        bytes_processed = 0
+
     # Use streaming zip writing
     with zipfile.ZipFile(output_stream, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk(target_dir):
@@ -270,6 +309,32 @@ def stream_directory_as_zip(
 
                 try:
                     zipf.write(file_path, arcname)
+
+                    if progress_callback:
+                        # Update progress (approximate)
+                        try:
+                            file_size = os.path.getsize(file_path)
+                            bytes_processed += file_size
+
+                            # Log every 10MB of data processed
+                            if bytes_processed % (10 * 1024 * 1024) < 1024 * 1024 and bytes_processed > 0:
+                                percentage = min((bytes_processed / total_size) * 100, 99)
+                                timestamp = get_timestamp()
+                                print(format_download_progress(
+                                    timestamp,
+                                    client_ip,
+                                    bytes_processed,
+                                    total_size,
+                                    percentage
+                                ))
+                        except OSError:
+                            pass
+
                 except (OSError, PermissionError):
                     # Skip files we can't read
                     continue
+
+    if progress_callback:
+        duration = time.time() - start_time
+        timestamp = get_timestamp()
+        print(format_download_complete(timestamp, client_ip, f"{os.path.basename(base_dir)}.zip", bytes_processed, duration))
