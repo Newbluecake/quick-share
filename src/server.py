@@ -132,8 +132,32 @@ class FileShareHandler(BaseHTTPRequestHandler):
             pass
 
     def _stream_file(self, file_path: str, filename: str):
-        """Stream a file to the client in chunks."""
+        """Stream a file to the client in chunks with progress tracking."""
+        try:
+            from .logger import (
+                format_download_start,
+                format_download_progress,
+                format_download_complete,
+                format_download_interrupted,
+                format_download_error,
+                get_timestamp
+            )
+            from .directory_handler import format_file_size
+        except ImportError:
+            from logger import (
+                format_download_start,
+                format_download_progress,
+                format_download_complete,
+                format_download_interrupted,
+                format_download_error,
+                get_timestamp
+            )
+            from directory_handler import format_file_size
+
+        import datetime
+
         file_size = os.path.getsize(file_path)
+        client_ip = self.client_address[0]
 
         self.send_response(200)
         self.send_header('Content-Type', 'application/octet-stream')
@@ -141,13 +165,55 @@ class FileShareHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(file_size))
         self.end_headers()
 
+        # Initialize progress tracker
+        tracker = DownloadProgressTracker(client_ip, filename, file_size)
+
+        # Log download start
+        timestamp = get_timestamp()
+        print(format_download_start(timestamp, client_ip, filename, format_file_size(file_size)))
+
         # Stream file in chunks
-        with open(file_path, 'rb') as f:
-            while True:
-                chunk = f.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+        try:
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    self.wfile.write(chunk)
+
+                    # Update progress
+                    if tracker.update(len(chunk)):
+                        percentage = tracker.get_progress_percentage()
+                        timestamp = get_timestamp()
+                        print(format_download_progress(
+                            timestamp,
+                            client_ip,
+                            tracker.bytes_transferred,
+                            file_size,
+                            percentage
+                        ))
+
+            # Log completion
+            tracker.complete()
+            duration = time.time() - tracker.start_time
+            timestamp = get_timestamp()
+            print(format_download_complete(timestamp, client_ip, filename, file_size, duration))
+
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected
+            timestamp = get_timestamp()
+            print(format_download_interrupted(
+                timestamp,
+                client_ip,
+                filename,
+                tracker.bytes_transferred,
+                file_size
+            ))
+        except Exception as e:
+            # Other errors
+            timestamp = get_timestamp()
+            print(format_download_error(timestamp, client_ip, filename, str(e)))
 
     def log_message(self, format, *args):
         """Suppress default logging to stdout/stderr unless needed."""
@@ -415,8 +481,30 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
             self.send_error(500, "Internal server error")
 
     def _stream_file_with_headers(self, file_path: str, filename: str):
-        """Send headers and stream file content."""
+        """Send headers and stream file content with progress tracking."""
+        try:
+            from .logger import (
+                format_download_start,
+                format_download_progress,
+                format_download_complete,
+                format_download_interrupted,
+                format_download_error,
+                get_timestamp
+            )
+            from .directory_handler import format_file_size
+        except ImportError:
+            from logger import (
+                format_download_start,
+                format_download_progress,
+                format_download_complete,
+                format_download_interrupted,
+                format_download_error,
+                get_timestamp
+            )
+            from directory_handler import format_file_size
+
         file_size = os.path.getsize(file_path)
+        client_ip = self.client_address[0]
 
         self.send_response(200)
         self._set_session_cookie_if_needed()
@@ -425,13 +513,55 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(file_size))
         self.end_headers()
 
+        # Initialize progress tracker
+        tracker = DownloadProgressTracker(client_ip, filename, file_size)
+
+        # Log download start
+        timestamp = get_timestamp()
+        print(format_download_start(timestamp, client_ip, filename, format_file_size(file_size)))
+
         # Stream file in chunks
-        with open(file_path, 'rb') as f:
-            while True:
-                chunk = f.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+        try:
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    self.wfile.write(chunk)
+
+                    # Update progress
+                    if tracker.update(len(chunk)):
+                        percentage = tracker.get_progress_percentage()
+                        timestamp = get_timestamp()
+                        print(format_download_progress(
+                            timestamp,
+                            client_ip,
+                            tracker.bytes_transferred,
+                            file_size,
+                            percentage
+                        ))
+
+            # Log completion
+            tracker.complete()
+            duration = time.time() - tracker.start_time
+            timestamp = get_timestamp()
+            print(format_download_complete(timestamp, client_ip, filename, file_size, duration))
+
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected
+            timestamp = get_timestamp()
+            print(format_download_interrupted(
+                timestamp,
+                client_ip,
+                filename,
+                tracker.bytes_transferred,
+                file_size
+            ))
+        except Exception as e:
+            # Other errors
+            timestamp = get_timestamp()
+            print(format_download_error(timestamp, client_ip, filename, str(e)))
 
     def _serve_directory_zip(self, base_dir: str, target_dir: str):
         """Stream directory as zip file."""
