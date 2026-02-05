@@ -18,6 +18,54 @@ except ImportError:
 CHUNK_SIZE = 8192  # 8KB chunks for file streaming
 
 
+class DownloadProgressTracker:
+    """Track download progress for a single client connection.
+
+    This class is thread-safe as each connection gets its own instance.
+    No shared state means no locks needed.
+    """
+
+    def __init__(self, client_ip: str, filename: str, file_size: int):
+        """
+        Initialize progress tracker.
+
+        Args:
+            client_ip: Client IP address
+            filename: Download filename
+            file_size: Total file size in bytes
+        """
+        self.client_ip = client_ip
+        self.filename = filename
+        self.file_size = file_size
+        self.bytes_transferred = 0
+        self.start_time = time.time()
+        self.is_complete = False
+
+    def update(self, chunk_size: int) -> bool:
+        """
+        Update progress after each chunk.
+
+        Args:
+            chunk_size: Size of transferred chunk
+
+        Returns:
+            True if should log progress (every N chunks to avoid spam)
+        """
+        self.bytes_transferred += chunk_size
+        # Log every 10 chunks (~80KB) to avoid excessive output
+        return self.bytes_transferred % (CHUNK_SIZE * 10) == 0 or self.bytes_transferred == self.file_size
+
+    def complete(self):
+        """Mark download as complete."""
+        self.is_complete = True
+
+    def get_progress_percentage(self) -> float:
+        """Calculate progress percentage."""
+        if self.file_size == 0:
+            return 0.0
+        return (self.bytes_transferred / self.file_size) * 100
+
+
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in a separate thread."""
     pass
