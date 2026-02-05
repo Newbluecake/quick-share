@@ -564,7 +564,7 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
             print(format_download_error(timestamp, client_ip, filename, str(e)))
 
     def _serve_directory_zip(self, base_dir: str, target_dir: str):
-        """Stream directory as zip file."""
+        """Stream directory as zip file with progress tracking."""
         dir_name = os.path.basename(base_dir)
         zip_filename = f"{dir_name}.zip"
 
@@ -576,9 +576,9 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         # Let the connection close naturally after streaming
         self.end_headers()
 
-        # Stream zip to client
+        # Stream zip to client with progress tracking
         try:
-            stream_directory_as_zip(self.wfile, base_dir, target_dir)
+            stream_directory_as_zip(self.wfile, base_dir, target_dir, progress_callback=True)
         except (BrokenPipeError, ConnectionResetError):
             # Client disconnected - this is normal, ignore it
             pass
