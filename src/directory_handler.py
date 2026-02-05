@@ -268,7 +268,6 @@ def stream_directory_as_zip(
             format_download_complete,
             get_timestamp
         )
-        from .utils import get_directory_info
     except ImportError:
         from logger import (
             format_download_start,
@@ -276,14 +275,19 @@ def stream_directory_as_zip(
             format_download_complete,
             get_timestamp
         )
-        from utils import get_directory_info
 
     import time
 
     if progress_callback:
-        # Estimate total size (not accurate for compressed zip, but good enough for progress)
-        dir_info = get_directory_info(target_dir)
-        total_size = dir_info['total_size']
+        # Calculate total directory size (not accurate for compressed zip, but good enough for progress)
+        total_size = 0
+        for root, dirs, files in os.walk(target_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    total_size += os.path.getsize(file_path)
+                except OSError:
+                    pass
 
         client_ip = "unknown"  # Not available in this context
         dir_name = os.path.basename(base_dir)
