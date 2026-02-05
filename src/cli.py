@@ -1,6 +1,64 @@
 import argparse
-import re
+import sys
 from . import __version__
+
+
+def is_update_command(args=None):
+    """
+    Check if the command is an update command.
+
+    Args:
+        args: List of arguments. If None, uses sys.argv[1:].
+
+    Returns:
+        True if the first argument is 'update', False otherwise.
+    """
+    if args is None:
+        args = sys.argv[1:]
+
+    if not args:
+        return False
+
+    # Check if first argument is 'update' (not a flag)
+    return args[0] == 'update'
+
+
+def parse_update_arguments(args=None):
+    """
+    Parse update subcommand arguments.
+
+    Args:
+        args: List of arguments. If None, uses sys.argv[1:].
+
+    Returns:
+        argparse.Namespace with update command options.
+    """
+    if args is None:
+        args = sys.argv[1:]
+
+    # Skip 'update' if present
+    if args and args[0] == 'update':
+        args = args[1:]
+
+    parser = argparse.ArgumentParser(
+        prog='quick-share update',
+        description='Check and update quick-share to the latest version'
+    )
+
+    parser.add_argument(
+        '--check',
+        action='store_true',
+        help='Only check for updates, do not install'
+    )
+
+    parser.add_argument(
+        '-y', '--yes',
+        action='store_true',
+        help='Skip confirmation prompt'
+    )
+
+    return parser.parse_args(args)
+
 
 def parse_arguments(args=None):
     """

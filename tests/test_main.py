@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import os
 
-from src.main import validate_file, main, detect_path_type, validate_path
+from src.main import validate_file, main, detect_path_type, validate_path, handle_symlink
 
 # T-013: Path type detection tests
 def test_detect_path_type_file(tmp_path):
@@ -374,4 +374,135 @@ def test_main_file_validation_error(mock_validate, mock_port, mock_ip):
         with pytest.raises(SystemExit) as e:
             main()
         assert e.value.code == 1
+
+
+# T-001: Symlink handling tests
+class TestSymlinkHandling:
+    """Test symlink detection and handling"""
+
+    def test_handle_symlink_to_file(self, tmp_path, capsys):
+        """Test handling symlink to file with user confirmation"""
+        # Create a real file
+        real_file = tmp_path / "real_file.txt"
+        real_file.write_text("Hello, World!")
+
+        # Create a symlink
+        symlink = tmp_path / "symlink"
+        symlink.symlink_to(real_file)
+
+        # Mock user input to confirm
+        with patch('builtins.input', return_value='y'):
+            is_valid, path_type, resolved = handle_symlink(str(symlink))
+
+        assert is_valid is True
+        assert path_type == "file"
+        assert resolved == real_file
+
+        captured = capsys.readouterr()
+        assert "检测到软链接" in captured.out
+        assert "源路径:" in captured.out
+        assert "目标路径:" in captured.out
+
+    def test_handle_symlink_to_directory(self, tmp_path, capsys):
+        """Test handling symlink to directory with user confirmation"""
+        # Create a real directory
+        real_dir = tmp_path / "real_dir"
+        real_dir.mkdir()
+
+        # Create a symlink
+        symlink = tmp_path / "symlink_dir"
+        symlink.symlink_to(real_dir)
+
+        # Mock user input to confirm
+        with patch('builtins.input', return_value='y'):
+            is_valid, path_type, resolved = handle_symlink(str(symlink))
+
+        assert is_valid is True
+        assert path_type == "directory"
+        assert resolved == real_dir
+
+    def test_handle_symlink_user_cancel(self, tmp_path, capsys):
+        """Test user cancels symlink following"""
+        # Create a real file
+        real_file = tmp_path / "real_file.txt"
+        real_file.write_text("Hello")
+
+        # Create a symlink
+        symlink = tmp_path / "symlink"
+        symlink.symlink_to(real_file)
+
+        # Mock user input to cancel
+        with patch('builtins.input', return_value='n'):
+            is_valid, path_type, resolved = handle_symlink(str(symlink))
+
+        assert is_valid is False
+        assert path_type == "symlink_cancelled"
+        assert resolved is None
+
+        captured = capsys.readouterr()
+        assert "用户取消分享" in captured.out
+
+    def test_handle_broken_symlink(self, tmp_path, capsys):
+        """Test handling broken symlink"""
+        # Create a symlink to non-existent target
+        symlink = tmp_path / "broken_symlink"
+        symlink.symlink_to("/nonexistent/path")
+
+        # Call handle_symlink (no user input needed)
+        is_valid, path_type, resolved = handle_symlink(str(symlink))
+
+        assert is_valid is False
+        assert path_type == "symlink_broken"
+        assert resolved is None
+
+        captured = capsys.readouterr()
+        assert "错误：软链接目标不存在" in captured.out
+
+    def test_validate_path_with_symlink(self, tmp_path):
+        """Test validate_path detects and handles symlink"""
+        # Create a real file
+        real_file = tmp_path / "real_file.txt"
+        real_file.write_text("Hello")
+
+        # Create a symlink
+        symlink = tmp_path / "symlink"
+        symlink.symlink_to(real_file)
+
+        # Mock user input to confirm
+        with patch('builtins.input', return_value='y'):
+            is_valid, path_type, resolved = validate_path(str(symlink))
+
+        assert is_valid is True
+        assert path_type == "file"
+        assert resolved == real_file
+
+    def test_validate_path_normal_file_unaffected(self, tmp_path):
+        """Test normal files are unaffected by symlink handling"""
+        # Create a normal file
+        normal_file = tmp_path / "normal_file.txt"
+        normal_file.write_text("Hello")
+
+        # No mock needed for input (should not prompt)
+        is_valid, path_type, resolved = validate_path(str(normal_file))
+
+        assert is_valid is True
+        assert path_type == "file"
+        assert resolved == normal_file
+
+    def test_handle_symlink_invalid_input_loop(self, tmp_path):
+        """Test invalid input prompts again"""
+        # Create a real file
+        real_file = tmp_path / "real_file.txt"
+        real_file.write_text("Hello")
+
+        # Create a symlink
+        symlink = tmp_path / "symlink"
+        symlink.symlink_to(real_file)
+
+        # Mock user input: invalid -> invalid -> valid
+        with patch('builtins.input', side_effect=['invalid', 'abc', 'y']):
+            is_valid, path_type, resolved = handle_symlink(str(symlink))
+
+        assert is_valid is True
+        assert path_type == "file"
 

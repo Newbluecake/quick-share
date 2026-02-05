@@ -5,6 +5,34 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-02-05
+
+### Added
+- Symlink handling with interactive user confirmation
+  - Automatic detection when sharing symlinked files or directories
+  - Shows symlink source and target paths before sharing
+  - Interactive prompt (y/n) to confirm following symlinks
+  - Broken symlink detection with clear error messages
+  - Proper exit codes: 0 for user cancellation, 1 for errors
+- Full backward compatibility: normal file/directory sharing unchanged
+
+### Changed
+- Enhanced `validate_path()` function to detect symlinks before processing
+- Added `handle_symlink()` function for symlink-specific logic
+- Improved error handling in `main()` for symlink-specific error types
+
+[1.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.1.0
+[1.0.13]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.13
+
+### Added
+- New `update` command: check and update quick-share to the latest version
+  - `quick-share update --check`: check for updates without installing
+  - `quick-share update`: update to latest version with confirmation
+  - `quick-share update -y`: skip confirmation prompt
+- Smart update source detection: automatically uses pip, exe replacement, or git based on installation method
+- Rollback mechanism: automatic rollback on update failure
+- Full backward compatibility: existing `quick-share <file>` usage unchanged
+
 ## [1.0.12] - 2026-01-27
 
 ### Added
@@ -90,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basename-only file access enforcement
 - No directory listing exposure
 
+[1.0.13]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.13
 [1.0.12]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.12
 [1.0.11]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.11
 [1.0.10]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.10

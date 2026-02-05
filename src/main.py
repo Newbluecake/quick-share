@@ -9,6 +9,7 @@ from .server import FileShareServer, DirectoryShareServer, find_available_port
 from .utils import format_file_size, parse_duration
 from . import logger
 
+
 def detect_path_type(path: str) -> str:
     """
     Detect whether a path is a file, directory, or invalid.
@@ -27,6 +28,46 @@ def detect_path_type(path: str) -> str:
     else:
         return "invalid"
 
+
+def handle_symlink(symlink_path: str) -> Tuple[bool, str, Optional[Path]]:
+    """
+    Handle symlink detection and user confirmation.
+
+    Args:
+        symlink_path: The symlink path to handle.
+
+    Returns:
+        Tuple containing:
+        - is_valid: True if user confirms, False otherwise
+        - path_type: "file", "directory", or "symlink_broken"/"symlink_cancelled"
+        - resolved_path: Real target path if confirmed, None otherwise
+    """
+    # Resolve symlink to get real target
+    real_path = Path(symlink_path).resolve()
+
+    # Display symlink info
+    print("⚠️  检测到软链接：")
+    print(f"    源路径: {symlink_path}")
+    print(f"    目标路径: {real_path}")
+
+    # Check if target exists
+    if not real_path.exists():
+        print("❌ 错误：软链接目标不存在")
+        return False, "symlink_broken", None
+
+    # Ask user for confirmation
+    while True:
+        choice = input("是否跟随软链接并分享目标文件/目录？(y/n): ").strip().lower()
+        if choice == 'y':
+            # Recursively call validate_path to verify real path
+            return validate_path(str(real_path))
+        elif choice == 'n':
+            print("❌ 用户取消分享")
+            return False, "symlink_cancelled", None
+        else:
+            print("请输入 y 或 n")
+
+
 def validate_path(path: str) -> Tuple[bool, str, Optional[Path]]:
     """
     Unified validation for both files and directories.
@@ -40,6 +81,10 @@ def validate_path(path: str) -> Tuple[bool, str, Optional[Path]]:
         - path_type: "file", "directory", or "invalid"
         - resolved_path: Path object if valid, None otherwise
     """
+    # Detect symlink first
+    if os.path.islink(path):
+        return handle_symlink(path)
+
     # Detect path type
     path_type = detect_path_type(path)
 
@@ -57,7 +102,7 @@ def validate_path(path: str) -> Tuple[bool, str, Optional[Path]]:
             _ = resolved_path.stat()
             # Try to open file to verify it's readable
             try:
-                with open(resolved_path, 'rb') as f:
+                with open(resolved_path, 'rb'):
                     pass
             except PermissionError:
                 return False, "file", None
@@ -80,6 +125,7 @@ def validate_path(path: str) -> Tuple[bool, str, Optional[Path]]:
         return False, path_type, None
 
     return False, "invalid", None
+
 
 def validate_file(file_path: str) -> Tuple[Path, int]:
     """
@@ -105,10 +151,17 @@ def validate_file(file_path: str) -> Tuple[Path, int]:
 
     return path, path.stat().st_size
 
+
 def main() -> None:
     """
     Main execution flow.
     """
+    # Check for update command first (before normal argument parsing)
+    from .cli import is_update_command
+    if is_update_command():
+        from .updater import run_update
+        sys.exit(run_update())
+
     try:
         # Parse and validate arguments
         args = parse_arguments()
@@ -122,7 +175,19 @@ def main() -> None:
         try:
             is_valid, path_type, resolved_path = validate_path(args.file_path)
 
-            if not is_valid or path_type == "invalid":
+            # Handle symlink-specific errors
+            if not is_valid:
+                if path_type == "symlink_broken":
+                    # Error message already shown by handle_symlink
+                    sys.exit(1)
+                elif path_type == "symlink_cancelled":
+                    # User cancelled, no error message needed
+                    sys.exit(0)
+                else:
+                    print(f"Error: Invalid path: {args.file_path}", file=sys.stderr)
+                    sys.exit(1)
+
+            if path_type == "invalid":
                 print(f"Error: Invalid path: {args.file_path}", file=sys.stderr)
                 sys.exit(1)
         except PermissionError:
@@ -209,6 +274,7 @@ def main() -> None:
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
