@@ -17,8 +17,9 @@ def test_full_application_flow(tmp_path):
     test_file = tmp_path / "integration_test.txt"
     test_file.write_text("Integration test content")
 
-    # Mock server start to avoid actually starting HTTP server
-    with patch('src.main.FileShareServer') as mock_server_class:
+    # Mock MultiShareServer (main() now always uses MultiShareServer)
+    with patch('src.main.MultiShareServer') as mock_server_class, \
+         patch('src.main.find_available_port', return_value=8080):
         server_instance = MagicMock()
         server_instance.server_thread = MagicMock()
         server_instance.server_thread.is_alive.return_value = False
@@ -26,7 +27,6 @@ def test_full_application_flow(tmp_path):
 
         # Simulate command line arguments
         with patch('sys.argv', ['quick-share', str(test_file), '-p', '8080', '-t', '1m']):
-            # Capture stdout
             from io import StringIO
             captured_output = StringIO()
 
@@ -36,9 +36,11 @@ def test_full_application_flow(tmp_path):
             # Verify server was initialized correctly
             mock_server_class.assert_called_once()
             call_kwargs = mock_server_class.call_args[1]
-            assert call_kwargs['file_path'] == str(test_file)
             assert call_kwargs['port'] == 8080
             assert call_kwargs['timeout_minutes'] == 1.0
+            # paths is a list of (abs_path, path_type) tuples
+            assert len(call_kwargs['paths']) == 1
+            assert call_kwargs['paths'][0][0] == str(test_file)
 
             # Verify server.start() was called
             server_instance.start.assert_called_once()
@@ -55,7 +57,8 @@ def test_application_with_defaults(tmp_path):
     test_file = tmp_path / "default_test.txt"
     test_file.write_text("Default test")
 
-    with patch('src.main.FileShareServer') as mock_server_class:
+    with patch('src.main.MultiShareServer') as mock_server_class, \
+         patch('src.main.find_available_port', return_value=8000):
         server_instance = MagicMock()
         server_instance.server_thread = None
         mock_server_class.return_value = server_instance
@@ -72,9 +75,9 @@ def test_application_with_defaults(tmp_path):
             call_kwargs = mock_server_class.call_args[1]
 
             # Port should be auto-detected (mocked find_available_port)
-            assert 'port' in call_kwargs
+            assert call_kwargs['port'] == 8000
 
-            # Timeout should be 5m = 300s = 5 minutes
+            # Timeout should be 5m = 5.0 minutes
             assert call_kwargs['timeout_minutes'] == 5.0
 
 
@@ -83,7 +86,8 @@ def test_keyboard_interrupt_during_server(tmp_path):
     test_file = tmp_path / "interrupt_test.txt"
     test_file.write_text("Interrupt test")
 
-    with patch('src.main.FileShareServer') as mock_server_class:
+    with patch('src.main.MultiShareServer') as mock_server_class, \
+         patch('src.main.find_available_port', return_value=8000):
         server_instance = MagicMock()
 
         # Simulate KeyboardInterrupt when start is called
@@ -109,13 +113,13 @@ def test_real_file_validation_integration(tmp_path):
             main()
         assert exc_info.value.code == 1
 
-    # Test with directory - should now work (directory sharing is supported)
+    # Test with directory - should work via MultiShareServer
     test_dir = tmp_path / "test_directory"
     test_dir.mkdir()
 
-    # Directory sharing should succeed (not raise SystemExit)
     with patch('sys.argv', ['quick-share', str(test_dir)]):
-        with patch('src.main.DirectoryShareServer') as mock_server_cls:
+        with patch('src.main.MultiShareServer') as mock_server_cls, \
+             patch('src.main.find_available_port', return_value=8000):
             mock_server = MagicMock()
             mock_server.server_thread = None
             mock_server_cls.return_value = mock_server
@@ -126,7 +130,7 @@ def test_real_file_validation_integration(tmp_path):
                 except KeyboardInterrupt:
                     pass  # Expected for graceful shutdown
 
-            # Verify DirectoryShareServer was used
+            # Verify MultiShareServer was used
             mock_server_cls.assert_called_once()
 
 
@@ -162,7 +166,8 @@ def test_various_timeout_formats(tmp_path):
     ]
 
     for timeout_str, expected_minutes in test_cases:
-        with patch('src.main.FileShareServer') as mock_server_class:
+        with patch('src.main.MultiShareServer') as mock_server_class, \
+             patch('src.main.find_available_port', return_value=8000):
             server_instance = MagicMock()
             server_instance.server_thread = None
             mock_server_class.return_value = server_instance

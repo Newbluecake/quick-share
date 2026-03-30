@@ -207,6 +207,7 @@ class TestDirectoryShareHandler(unittest.TestCase):
         with patch.object(BaseHTTPRequestHandler, '__init__', return_value=None):
             handler = DirectoryShareHandler(MagicMock(), ('127.0.0.1', 12345), server_obj)
             handler.server = server_obj
+            handler.client_address = ('127.0.0.1', 12345)
             handler.send_response = MagicMock()
             handler.send_header = MagicMock()
             handler.end_headers = MagicMock()

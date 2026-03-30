@@ -187,7 +187,7 @@ class TestBackwardCompatibility:
         from src.cli import parse_arguments
 
         args = parse_arguments(['test.txt'])
-        assert args.file_path == 'test.txt'
+        assert args.file_paths == ['test.txt']
         assert args.max_downloads == 10
         assert args.timeout == '5m'
 
@@ -196,7 +196,7 @@ class TestBackwardCompatibility:
         from src.cli import parse_arguments
 
         args = parse_arguments(['file.txt', '-n', '5', '-t', '10m', '-p', '9000'])
-        assert args.file_path == 'file.txt'
+        assert args.file_paths == ['file.txt']
         assert args.max_downloads == 5
         assert args.timeout == '10m'
         assert args.port == 9000
