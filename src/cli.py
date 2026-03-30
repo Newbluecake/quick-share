@@ -79,8 +79,9 @@ def parse_arguments(args=None):
     )
 
     parser.add_argument(
-        "file_path",
-        help="Path to the file to share"
+        "file_paths",
+        nargs='+',
+        help="One or more files or directories to share"
     )
 
     parser.add_argument(

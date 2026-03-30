@@ -446,3 +446,296 @@ def generate_spa_html(base_dir_name: str) -> str:
 </body>
 </html>
 """
+
+
+from typing import List, Tuple
+
+
+def generate_multi_share_spa_html(item_count: int) -> str:
+    """
+    Generate the SPA HTML page for multi-path sharing.
+
+    Differences from generate_spa_html():
+    - Title shows "N items" instead of directory name.
+    - ZIP download button points to /download/all.zip.
+    - File download links are prefixed with /files/.
+    - Clicking a file triggers a browser download (no preview panel).
+    - No Legacy View button (replaced by list-only view).
+
+    Args:
+        item_count: Number of shared top-level items (for title display).
+
+    Returns:
+        Full HTML/CSS/JS string for the SPA page.
+    """
+    title_text = html.escape(f"{item_count} item{'s' if item_count != 1 else ''}")
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick Share - {title_text}</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        :root {{
+            --bg: #f5f5f5;
+            --white: #fff;
+            --border: #ddd;
+            --primary: #007bff;
+            --text: #333;
+            --header-h: 60px;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }}
+        header {{
+            height: var(--header-h);
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }}
+        .brand {{ font-weight: bold; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; }}
+        .brand .sub {{ color: #888; font-weight: normal; font-size: 0.95rem; }}
+        .btn {{
+            padding: 8px 16px; border-radius: 4px; text-decoration: none;
+            font-size: 0.9rem; cursor: pointer; border: 1px solid var(--border);
+            background: #f8f9fa; color: var(--text);
+        }}
+        .btn-primary {{ background: var(--primary); color: white; border-color: var(--primary); }}
+        .main {{ flex: 1; overflow-y: auto; padding: 20px; }}
+        .file-list {{ background: var(--white); border-radius: 6px; border: 1px solid var(--border); overflow: hidden; }}
+        .list-item {{
+            display: flex; align-items: center; padding: 10px 16px;
+            border-bottom: 1px solid var(--border); gap: 10px;
+        }}
+        .list-item:last-child {{ border-bottom: none; }}
+        .list-item:hover {{ background: #f8f9fa; }}
+        .item-icon {{ width: 24px; text-align: center; flex-shrink: 0; }}
+        .item-name {{ flex: 1; font-size: 0.95rem; }}
+        .item-name a {{ color: inherit; text-decoration: none; }}
+        .item-name a:hover {{ color: var(--primary); text-decoration: underline; }}
+        .item-size {{ color: #888; font-size: 0.85rem; width: 90px; text-align: right; flex-shrink: 0; }}
+        .item-children {{ padding-left: 20px; border-top: 1px solid var(--border); }}
+        .loading {{ color: #aaa; font-size: 0.85rem; padding: 6px 16px; }}
+        .error-banner {{
+            color: #dc3545; background: #f8d7da; padding: 12px 16px;
+            border-radius: 4px; margin-bottom: 16px;
+        }}
+        .empty {{ color: #aaa; text-align: center; padding: 40px; }}
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="brand">
+                <span>Quick Share</span>
+                <span class="sub">/ {title_text}</span>
+            </div>
+            <a href="/download/all.zip" class="btn btn-primary">Download All (ZIP)</a>
+        </header>
+        <div class="main">
+            <div v-if="error" class="error-banner">{{{{ error }}}}</div>
+            <div v-if="loading && items.length === 0" class="empty">Loading...</div>
+            <div v-else-if="items.length === 0" class="empty">No items shared.</div>
+            <div v-else class="file-list">
+                <file-item
+                    v-for="item in items"
+                    :key="item.name"
+                    :item="item"
+                    :virtual-path="'/' + item.name"
+                ></file-item>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const {{ createApp, ref, onMounted }} = Vue;
+
+        const FileItem = {{
+            name: 'FileItem',
+            props: ['item', 'virtualPath'],
+            setup(props) {{
+                const isOpen = ref(false);
+                const children = ref([]);
+                const isLoading = ref(false);
+                const isFolder = props.item.type === 'directory';
+
+                function toggle() {{
+                    if (!isFolder) return;
+                    isOpen.value = !isOpen.value;
+                    if (isOpen.value && children.value.length === 0) {{
+                        loadChildren();
+                    }}
+                }}
+
+                async function loadChildren() {{
+                    isLoading.value = true;
+                    try {{
+                        const res = await fetch('/api/tree?path=' + encodeURIComponent(props.virtualPath));
+                        if (!res.ok) throw new Error('Failed to load');
+                        const data = await res.json();
+                        children.value = data.items.map(c => ({{
+                            ...c,
+                            _virtualPath: props.virtualPath + '/' + c.name
+                        }}));
+                    }} catch(e) {{
+                        console.error(e);
+                    }} finally {{
+                        isLoading.value = false;
+                    }}
+                }}
+
+                function formatSize(bytes) {{
+                    if (!bytes) return '-';
+                    const k = 1024, sizes = ['B','KB','MB','GB','TB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+                }}
+
+                return {{ isOpen, isFolder, children, isLoading, toggle, formatSize }};
+            }},
+            template: `
+                <div>
+                    <div class="list-item" :style="isFolder ? 'cursor:pointer' : ''" @click="isFolder && toggle()">
+                        <span class="item-icon">{{{{ isFolder ? (isOpen ? '📂' : '📁') : '📄' }}}}</span>
+                        <span class="item-name">
+                            <a v-if="!isFolder" :href="'/files' + virtualPath" :download="item.name">{{{{ item.name }}}}</a>
+                            <span v-else>{{{{ item.name }}}}</span>
+                        </span>
+                        <span class="item-size">{{{{ isFolder ? '-' : formatSize(item.size) }}}}</span>
+                    </div>
+                    <div v-if="isFolder && isOpen" class="item-children">
+                        <div v-if="isLoading" class="loading">Loading...</div>
+                        <file-item
+                            v-else
+                            v-for="child in children"
+                            :key="child.name"
+                            :item="child"
+                            :virtual-path="child._virtualPath"
+                        ></file-item>
+                        <div v-if="!isLoading && children.length === 0" class="loading">(Empty)</div>
+                    </div>
+                </div>
+            `
+        }};
+
+        createApp({{
+            components: {{ FileItem }},
+            setup() {{
+                const items = ref([]);
+                const loading = ref(false);
+                const error = ref(null);
+
+                async function loadRoot() {{
+                    loading.value = true;
+                    try {{
+                        const res = await fetch('/api/tree?path=/');
+                        if (!res.ok) throw new Error('Failed to load root');
+                        const data = await res.json();
+                        items.value = data.items;
+                    }} catch(e) {{
+                        error.value = 'Failed to load file list: ' + e.message;
+                    }} finally {{
+                        loading.value = false;
+                    }}
+                }}
+
+                onMounted(loadRoot);
+                return {{ items, loading, error }};
+            }}
+        }}).mount('#app');
+    </script>
+</body>
+</html>
+"""
+
+
+def generate_multi_share_legacy_html(
+    paths: List[Tuple[str, str]],
+) -> str:
+    """
+    Generate server-side rendered HTML for multi-path sharing (legacy mode).
+
+    Used when the server is started with --legacy or ?legacy=1 is in the URL.
+
+    Args:
+        paths: List of (abs_path, path_type) tuples.
+
+    Returns:
+        HTML string with a table listing all shared items.
+    """
+    item_count = len(paths)
+    title_text = html.escape(f"{item_count} item{'s' if item_count != 1 else ''}")
+
+    rows_html = ""
+    for abs_path, path_type in paths:
+        name = html.escape(os.path.basename(abs_path))
+        if path_type == "file":
+            try:
+                from .directory_handler import format_file_size
+            except ImportError:
+                from directory_handler import format_file_size
+            try:
+                size_str = format_file_size(os.path.getsize(abs_path))
+            except OSError:
+                size_str = "?"
+            type_str = "File"
+            action = f'<a href="/files/{name}" download="{name}">Download</a>'
+        else:
+            size_str = "-"
+            type_str = "Directory"
+            action = f'<a href="/download/all.zip">Download ZIP</a>'
+
+        rows_html += (
+            f"<tr>"
+            f"<td>{'📁' if path_type == 'directory' else '📄'} {name}</td>"
+            f"<td>{type_str}</td>"
+            f"<td>{size_str}</td>"
+            f"<td>{action}</td>"
+            f"</tr>\n"
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick Share - {title_text}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
+        .container {{ max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }}
+        h1 {{ color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }}
+        .btn {{ padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; display: inline-block; margin-bottom: 16px; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
+        th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #ddd; }}
+        th {{ background: #f8f9fa; font-weight: 600; }}
+        a {{ color: #007bff; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Quick Share - {title_text}</h1>
+        <a href="/download/all.zip" class="btn">Download All (ZIP)</a>
+        <table>
+            <thead>
+                <tr><th>Name</th><th>Type</th><th>Size</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"""

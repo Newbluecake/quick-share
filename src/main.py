@@ -1,11 +1,11 @@
 import sys
 import os
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import List, Tuple, Optional
 
 from .cli import parse_arguments, validate_arguments
 from .network import get_local_ip, get_all_lan_ips
-from .server import FileShareServer, DirectoryShareServer, find_available_port
+from .server import FileShareServer, DirectoryShareServer, MultiShareServer, find_available_port
 from .utils import format_file_size, parse_duration
 from . import logger
 
@@ -127,6 +127,58 @@ def validate_path(path: str) -> Tuple[bool, str, Optional[Path]]:
     return False, "invalid", None
 
 
+def validate_multi_paths(
+    paths: List[str],
+) -> Tuple[bool, List[Tuple[str, str]], List[str]]:
+    """
+    Validate multiple paths and detect top-level name conflicts.
+
+    Args:
+        paths: List of path strings supplied from the CLI.
+
+    Returns:
+        Tuple of:
+        - is_valid: True if all paths are valid and there are no name conflicts.
+        - resolved_paths: List of (abs_path, path_type) tuples for valid paths.
+        - errors: Human-readable error messages (empty when is_valid is True).
+    """
+    errors: List[str] = []
+    resolved: List[Tuple[str, str]] = []
+
+    for path in paths:
+        is_valid, path_type, resolved_path = validate_path(path)
+
+        if not is_valid:
+            if path_type == "symlink_broken":
+                errors.append(f"Broken symlink: {path}")
+            elif path_type == "symlink_cancelled":
+                errors.append(f"Symlink cancelled by user: {path}")
+            else:
+                errors.append(f"Invalid path (does not exist or is not accessible): {path}")
+        else:
+            resolved.append((str(resolved_path), path_type))
+
+    if errors:
+        return False, [], errors
+
+    # Detect top-level name conflicts (basename duplicates)
+    seen: dict = {}
+    for abs_path, _ in resolved:
+        name = os.path.basename(abs_path)
+        if name in seen:
+            errors.append(
+                f"Name conflict: '{name}' appears in both "
+                f"'{seen[name]}' and '{abs_path}'"
+            )
+        else:
+            seen[name] = abs_path
+
+    if errors:
+        return False, [], errors
+
+    return True, resolved, []
+
+
 def validate_file(file_path: str) -> Tuple[Path, int]:
     """
     Validate that the file exists and is not a directory.
@@ -155,6 +207,9 @@ def validate_file(file_path: str) -> Tuple[Path, int]:
 def main() -> None:
     """
     Main execution flow.
+
+    Accepts one or more file/directory paths and serves them via
+    MultiShareServer, which always presents a unified file-list page.
     """
     # Check for update command first (before normal argument parsing)
     from .cli import is_update_command
@@ -171,27 +226,15 @@ def main() -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-        # Validate path (file or directory)
+        # Validate all paths and detect name conflicts
         try:
-            is_valid, path_type, resolved_path = validate_path(args.file_path)
-
-            # Handle symlink-specific errors
+            is_valid, resolved_paths, errors = validate_multi_paths(args.file_paths)
             if not is_valid:
-                if path_type == "symlink_broken":
-                    # Error message already shown by handle_symlink
-                    sys.exit(1)
-                elif path_type == "symlink_cancelled":
-                    # User cancelled, no error message needed
-                    sys.exit(0)
-                else:
-                    print(f"Error: Invalid path: {args.file_path}", file=sys.stderr)
-                    sys.exit(1)
-
-            if path_type == "invalid":
-                print(f"Error: Invalid path: {args.file_path}", file=sys.stderr)
+                for err in errors:
+                    print(f"Error: {err}", file=sys.stderr)
                 sys.exit(1)
-        except PermissionError:
-            print(f"Error: Permission denied reading {args.file_path}", file=sys.stderr)
+        except PermissionError as e:
+            print(f"Error: Permission denied: {e}", file=sys.stderr)
             sys.exit(1)
 
         # Get network info
@@ -215,50 +258,41 @@ def main() -> None:
         timeout_seconds = parse_duration(args.timeout)
         server_timeout_minutes = timeout_seconds / 60
 
-        # Dispatch to appropriate server based on path type
-        if path_type == "file":
-            # File sharing logic
-            file_size_bytes = resolved_path.stat().st_size
+        # Build display label for startup message
+        if len(resolved_paths) == 1:
+            abs_path, path_type = resolved_paths[0]
+            item_label = os.path.basename(abs_path)
+            if path_type == "file":
+                size_label = format_file_size(os.path.getsize(abs_path))
+            else:
+                size_label = "Directory"
+        else:
+            names = [os.path.basename(p) for p, _ in resolved_paths]
+            item_label = ", ".join(names[:3])
+            if len(names) > 3:
+                item_label += f" ... (+{len(names) - 3} more)"
+            size_label = f"{len(resolved_paths)} items"
 
-            server = FileShareServer(
-                file_path=str(resolved_path),
-                port=port,
-                timeout_minutes=server_timeout_minutes
-            )
+        # Always use MultiShareServer (single or multiple paths)
+        server = MultiShareServer(
+            paths=resolved_paths,
+            port=port,
+            timeout_minutes=server_timeout_minutes,
+            max_sessions=args.max_downloads,
+            legacy_mode=args.legacy,
+        )
 
-            # Print startup message for file
-            msg = logger.format_startup_message(
-                ip=local_ip,
-                port=port,
-                filename=resolved_path.name,
-                file_size=format_file_size(file_size_bytes),
-                max_downloads=args.max_downloads,
-                timeout=timeout_seconds,
-                all_ips=all_ips
-            )
-            print(msg)
-
-        elif path_type == "directory":
-            # Directory sharing logic
-            server = DirectoryShareServer(
-                directory_path=str(resolved_path),
-                port=port,
-                timeout_minutes=server_timeout_minutes,
-                max_sessions=args.max_downloads,  # Reuse max_downloads as max_sessions
-                legacy_mode=args.legacy
-            )
-
-            # Print startup message for directory
-            msg = logger.format_startup_message(
-                ip=local_ip,
-                port=port,
-                filename=resolved_path.name,
-                file_size="Directory",  # No size for directories
-                max_downloads=args.max_downloads,
-                timeout=timeout_seconds,
-                all_ips=all_ips
-            )
-            print(msg)
+        # Print startup message
+        msg = logger.format_startup_message(
+            ip=local_ip,
+            port=port,
+            filename=item_label,
+            file_size=size_label,
+            max_downloads=args.max_downloads,
+            timeout=timeout_seconds,
+            all_ips=all_ips,
+        )
+        print(msg)
 
         # Start server and wait for completion
         try:

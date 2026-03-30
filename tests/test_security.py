@@ -4,7 +4,7 @@ import pytest
 import os
 import tempfile
 from pathlib import Path
-from src.security import validate_request_path, is_path_traversal_attack, validate_directory_path
+from src.security import validate_request_path, is_path_traversal_attack, validate_directory_path, validate_multi_share_path
 
 
 class TestPathTraversalDetection:
@@ -278,3 +278,128 @@ class TestValidateDirectoryPath:
             assert is_valid is True
             # Verify it resolves to the real path
             assert os.path.samefile(real_path, str(real_file))
+
+
+class TestValidateMultiSharePath:
+    """Tests for validate_multi_share_path() – multi-share virtual FS security."""
+
+    # --- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _make_shared(tmp_path):
+        """
+        Build a simple shared layout and return the paths list:
+          file.txt          (top-level file)
+          subdir/           (top-level directory)
+            inner.txt
+        """
+        f = tmp_path / "file.txt"
+        f.write_text("hello")
+
+        d = tmp_path / "subdir"
+        d.mkdir()
+        (d / "inner.txt").write_text("inner")
+
+        return [
+            (str(f), "file"),
+            (str(d), "directory"),
+        ]
+
+    # --- happy-path tests --------------------------------------------------
+
+    def test_top_level_file_download(self, tmp_path):
+        """Valid request for a top-level shared file."""
+        shared = self._make_shared(tmp_path)
+        ok, real = validate_multi_share_path("/files/file.txt", shared)
+        assert ok is True
+        assert os.path.basename(real) == "file.txt"
+
+    def test_directory_subfile_download(self, tmp_path):
+        """Valid request for a file inside a shared directory."""
+        shared = self._make_shared(tmp_path)
+        ok, real = validate_multi_share_path("/files/subdir/inner.txt", shared)
+        assert ok is True
+        assert os.path.basename(real) == "inner.txt"
+
+    def test_query_string_stripped(self, tmp_path):
+        """Query strings are stripped before validation."""
+        shared = self._make_shared(tmp_path)
+        ok, real = validate_multi_share_path("/files/file.txt?foo=bar", shared)
+        assert ok is True
+
+    def test_url_encoded_name(self, tmp_path):
+        """URL-encoded filenames are decoded correctly."""
+        f = tmp_path / "my file.txt"
+        f.write_text("space")
+        shared = [(str(f), "file")]
+        ok, real = validate_multi_share_path("/files/my%20file.txt", shared)
+        assert ok is True
+
+    # --- rejection tests ---------------------------------------------------
+
+    def test_missing_files_prefix(self, tmp_path):
+        """Requests not starting with /files/ are rejected."""
+        shared = self._make_shared(tmp_path)
+        ok, _ = validate_multi_share_path("/file.txt", shared)
+        assert ok is False
+
+    def test_unknown_top_name(self, tmp_path):
+        """Top-level name not in shared list → rejected."""
+        shared = self._make_shared(tmp_path)
+        ok, _ = validate_multi_share_path("/files/notexist.txt", shared)
+        assert ok is False
+
+    def test_file_with_extra_sub_path(self, tmp_path):
+        """File entry with an extra path component is rejected."""
+        shared = self._make_shared(tmp_path)
+        ok, _ = validate_multi_share_path("/files/file.txt/extra", shared)
+        assert ok is False
+
+    def test_directory_requested_directly(self, tmp_path):
+        """Requesting a directory itself (no sub-path) is rejected."""
+        shared = self._make_shared(tmp_path)
+        ok, _ = validate_multi_share_path("/files/subdir", shared)
+        assert ok is False
+
+    def test_path_traversal_double_dot(self, tmp_path):
+        """Classic .. traversal is rejected."""
+        shared = self._make_shared(tmp_path)
+        ok, _ = validate_multi_share_path("/files/../etc/passwd", shared)
+        assert ok is False
+
+    def test_path_traversal_inside_directory(self, tmp_path):
+        """Traversal inside a directory entry escaping the sandbox is rejected."""
+        shared = self._make_shared(tmp_path)
+        # Create a file outside the sandbox to confirm we can't reach it
+        outside = tmp_path / "secret.txt"
+        outside.write_text("secret")
+        ok, _ = validate_multi_share_path("/files/subdir/../../secret.txt", shared)
+        assert ok is False
+
+    def test_path_traversal_url_encoded(self, tmp_path):
+        """URL-encoded traversal is rejected."""
+        shared = self._make_shared(tmp_path)
+        ok, _ = validate_multi_share_path("/files/%2e%2e/etc/passwd", shared)
+        assert ok is False
+
+    def test_nonexistent_subfile(self, tmp_path):
+        """File that doesn't exist inside shared directory is rejected."""
+        shared = self._make_shared(tmp_path)
+        ok, _ = validate_multi_share_path("/files/subdir/ghost.txt", shared)
+        assert ok is False
+
+    def test_empty_shared_list(self):
+        """Empty shared list – nothing is valid."""
+        ok, _ = validate_multi_share_path("/files/file.txt", [])
+        assert ok is False
+
+    def test_symlink_escape_rejected(self, tmp_path):
+        """Symlink inside shared dir pointing outside is rejected."""
+        shared = self._make_shared(tmp_path)
+        secret = tmp_path / "secret.txt"
+        secret.write_text("secret")
+        d = tmp_path / "subdir"
+        link = d / "escape.txt"
+        link.symlink_to(secret)
+        ok, _ = validate_multi_share_path("/files/subdir/escape.txt", shared)
+        assert ok is False

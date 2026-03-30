@@ -3,6 +3,7 @@
 import os
 import html
 import zipfile
+from typing import List, Tuple
 from pathlib import Path
 from typing import Dict
 from datetime import datetime
@@ -338,3 +339,165 @@ def stream_directory_as_zip(
         duration = time.time() - start_time
         timestamp = get_timestamp()
         print(format_download_complete(timestamp, client_ip, f"{os.path.basename(base_dir)}.zip", bytes_processed, duration))
+
+
+def get_multi_share_root_structure(
+    paths: List[Tuple[str, str]],
+) -> dict:
+    """
+    Get the virtual root structure for multi-path sharing.
+
+    Returns a dict in the same format as get_directory_structure(), but
+    instead of scanning a real directory it synthesises entries from the
+    caller-supplied list of shared paths.
+
+    Args:
+        paths: List of (abs_path, path_type) tuples as produced by
+               validate_multi_paths().
+
+    Returns:
+        {"path": "/", "items": [...]}
+        Each item has keys: name, type ("file"|"directory"), size, modified.
+    """
+    items = []
+    for abs_path, path_type in paths:
+        try:
+            stat = os.stat(abs_path)
+            items.append({
+                "name": os.path.basename(abs_path),
+                "type": "directory" if path_type == "directory" else "file",
+                "size": stat.st_size if path_type == "file" else 0,
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+        except OSError:
+            # Skip entries we can no longer access
+            continue
+
+    # Sort: directories first, then alphabetically by name
+    items.sort(key=lambda x: (x["type"] != "directory", x["name"].lower()))
+
+    return {"path": "/", "items": items}
+
+
+def stream_multi_paths_as_zip(
+    output_stream,
+    paths: List[Tuple[str, str]],
+    progress_callback: bool = False,
+) -> None:
+    """
+    Stream multiple files and/or directories as a single ZIP archive.
+
+    ZIP internal structure
+    ---------------------
+    * Top-level file  ``file.txt``  →  stored as ``file.txt``
+    * Top-level dir   ``mydir/``    →  stored as ``mydir/sub/file.txt``
+
+    Args:
+        output_stream: HTTP response wfile (or any writable binary stream).
+        paths: List of (abs_path, path_type) tuples.
+        progress_callback: If True, print progress log lines.
+    """
+    try:
+        from .logger import (
+            format_download_start,
+            format_download_progress,
+            format_download_complete,
+            get_timestamp,
+        )
+    except ImportError:
+        from logger import (
+            format_download_start,
+            format_download_progress,
+            format_download_complete,
+            get_timestamp,
+        )
+
+    import time
+
+    # Compute total size for progress tracking
+    if progress_callback:
+        total_size = 0
+        for abs_path, path_type in paths:
+            if path_type == "file":
+                try:
+                    total_size += os.path.getsize(abs_path)
+                except OSError:
+                    pass
+            else:
+                for root, _dirs, files in os.walk(abs_path):
+                    for fname in files:
+                        try:
+                            total_size += os.path.getsize(os.path.join(root, fname))
+                        except OSError:
+                            pass
+
+        client_ip = "unknown"
+        timestamp = get_timestamp()
+        print(
+            format_download_start(
+                timestamp, client_ip, "quick-share.zip", format_file_size(total_size)
+            )
+        )
+        start_time = time.time()
+        bytes_processed = 0
+
+    with zipfile.ZipFile(output_stream, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for abs_path, path_type in paths:
+            top_name = os.path.basename(abs_path)
+
+            if path_type == "file":
+                try:
+                    zipf.write(abs_path, arcname=top_name)
+                    if progress_callback:
+                        try:
+                            bytes_processed += os.path.getsize(abs_path)
+                        except OSError:
+                            pass
+                except (OSError, PermissionError):
+                    continue
+            else:
+                # Directory: walk and preserve internal structure under top_name/
+                for root, _dirs, files in os.walk(abs_path):
+                    for fname in files:
+                        file_path = os.path.join(root, fname)
+                        rel = os.path.relpath(file_path, abs_path)
+                        arcname = os.path.join(top_name, rel)
+                        try:
+                            zipf.write(file_path, arcname=arcname)
+                            if progress_callback:
+                                try:
+                                    file_sz = os.path.getsize(file_path)
+                                    bytes_processed += file_sz
+                                    # Log every ~10 MB processed
+                                    if (
+                                        total_size > 0
+                                        and bytes_processed % (10 * 1024 * 1024)
+                                        < 1024 * 1024
+                                        and bytes_processed > 0
+                                    ):
+                                        pct = min(
+                                            (bytes_processed / total_size) * 100, 99
+                                        )
+                                        ts = get_timestamp()
+                                        print(
+                                            format_download_progress(
+                                                ts,
+                                                client_ip,
+                                                bytes_processed,
+                                                total_size,
+                                                pct,
+                                            )
+                                        )
+                                except OSError:
+                                    pass
+                        except (OSError, PermissionError):
+                            continue
+
+    if progress_callback:
+        duration = time.time() - start_time
+        ts = get_timestamp()
+        print(
+            format_download_complete(
+                ts, client_ip, "quick-share.zip", bytes_processed, duration
+            )
+        )

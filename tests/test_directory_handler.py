@@ -13,7 +13,9 @@ from directory_handler import (
     get_directory_info,
     format_file_size,
     generate_directory_listing_html,
-    stream_directory_as_zip
+    stream_directory_as_zip,
+    get_multi_share_root_structure,
+    stream_multi_paths_as_zip,
 )
 
 
@@ -190,3 +192,109 @@ class TestZipGeneration:
             with zipfile.ZipFile(output, 'r') as zf:
                 # Empty zip is still valid
                 assert len(zf.namelist()) == 0
+
+
+class TestGetMultiShareRootStructure:
+    """Tests for get_multi_share_root_structure() – T-004."""
+
+    def test_single_file(self, tmp_path):
+        f = tmp_path / "hello.txt"
+        f.write_text("hi")
+        data = get_multi_share_root_structure([(str(f), "file")])
+        assert data["path"] == "/"
+        assert len(data["items"]) == 1
+        item = data["items"][0]
+        assert item["name"] == "hello.txt"
+        assert item["type"] == "file"
+        assert item["size"] == 2
+
+    def test_single_directory(self, tmp_path):
+        d = tmp_path / "mydir"
+        d.mkdir()
+        data = get_multi_share_root_structure([(str(d), "directory")])
+        assert len(data["items"]) == 1
+        item = data["items"][0]
+        assert item["name"] == "mydir"
+        assert item["type"] == "directory"
+        assert item["size"] == 0
+
+    def test_mixed_paths(self, tmp_path):
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        d = tmp_path / "mydir"
+        d.mkdir()
+        data = get_multi_share_root_structure([(str(f), "file"), (str(d), "directory")])
+        assert len(data["items"]) == 2
+        types = [i["type"] for i in data["items"]]
+        # Directories sorted first
+        assert types[0] == "directory"
+
+    def test_empty_list(self):
+        data = get_multi_share_root_structure([])
+        assert data["path"] == "/"
+        assert data["items"] == []
+
+    def test_sorting(self, tmp_path):
+        """Directories come before files; within each group, alphabetical."""
+        f1 = tmp_path / "z.txt"
+        f1.write_text("z")
+        f2 = tmp_path / "a.txt"
+        f2.write_text("a")
+        d = tmp_path / "mydir"
+        d.mkdir()
+        data = get_multi_share_root_structure([
+            (str(f1), "file"), (str(f2), "file"), (str(d), "directory")
+        ])
+        names = [i["name"] for i in data["items"]]
+        assert names[0] == "mydir"
+        assert names[1] == "a.txt"
+        assert names[2] == "z.txt"
+
+
+class TestStreamMultiPathsAsZip:
+    """Tests for stream_multi_paths_as_zip() – T-004."""
+
+    def test_single_file(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("content")
+        buf = io.BytesIO()
+        stream_multi_paths_as_zip(buf, [(str(f), "file")])
+        buf.seek(0)
+        with zipfile.ZipFile(buf) as zf:
+            assert "test.txt" in zf.namelist()
+            assert zf.read("test.txt") == b"content"
+
+    def test_directory(self, tmp_path):
+        d = tmp_path / "mydir"
+        d.mkdir()
+        (d / "sub.txt").write_text("sub")
+        (d / "inner").mkdir()
+        (d / "inner" / "deep.txt").write_text("deep")
+        buf = io.BytesIO()
+        stream_multi_paths_as_zip(buf, [(str(d), "directory")])
+        buf.seek(0)
+        with zipfile.ZipFile(buf) as zf:
+            names = zf.namelist()
+            assert "mydir/sub.txt" in names
+            assert "mydir/inner/deep.txt" in names
+
+    def test_multiple_paths(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("hello")
+        d = tmp_path / "folder"
+        d.mkdir()
+        (d / "child.txt").write_text("child")
+        buf = io.BytesIO()
+        stream_multi_paths_as_zip(buf, [(str(f), "file"), (str(d), "directory")])
+        buf.seek(0)
+        with zipfile.ZipFile(buf) as zf:
+            names = zf.namelist()
+            assert "file.txt" in names
+            assert "folder/child.txt" in names
+
+    def test_empty_paths(self):
+        buf = io.BytesIO()
+        stream_multi_paths_as_zip(buf, [])
+        buf.seek(0)
+        with zipfile.ZipFile(buf) as zf:
+            assert zf.namelist() == []

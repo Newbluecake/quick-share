@@ -2,7 +2,7 @@
 
 import urllib.parse
 import os
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 
 def is_path_traversal_attack(path: str) -> bool:
@@ -135,3 +135,114 @@ def validate_directory_path(
         return False, ""
 
     return True, real_path
+
+
+def validate_multi_share_path(
+    request_path: str,
+    shared_paths: List[Tuple[str, str]],
+) -> Tuple[bool, str]:
+    """
+    Validate a download request path in a multi-share context.
+
+    The virtual filesystem uses the ``/files/`` URL prefix:
+      - ``/files/<top_name>``              – top-level shared file
+      - ``/files/<top_dir>/<sub_path>``    – file inside a shared directory
+
+    Security guarantees
+    -------------------
+    * URL decoding + path-traversal detection before any filesystem access.
+    * For directory entries: ``os.path.realpath`` + ``os.path.commonpath`` ensure
+      the resolved path stays inside the shared directory (symlink-safe).
+    * A top-level file entry never accepts sub-path requests.
+
+    Args:
+        request_path: HTTP request path, e.g. ``/files/foo.txt`` or
+            ``/files/dir1/sub/bar.txt``.
+        shared_paths: List of ``(abs_path, path_type)`` tuples as produced
+            by :func:`src.main.validate_multi_paths`.
+
+    Returns:
+        ``(is_valid, real_abs_path)`` where *real_abs_path* is the
+        fully-resolved filesystem path when valid, or ``""`` otherwise.
+    """
+    FILES_PREFIX = "/files/"
+
+    # 1. Must start with /files/
+    if not request_path.startswith(FILES_PREFIX):
+        return False, ""
+
+    # 2. Strip query string / fragment
+    clean = request_path.split("?")[0].split("#")[0]
+
+    # 3. Extract the virtual path after /files/
+    virtual_path = clean[len(FILES_PREFIX):]
+
+    # 4. URL-decode the virtual path
+    decoded = urllib.parse.unquote(virtual_path)
+
+    # 5. Path traversal check on both raw and decoded forms
+    if is_path_traversal_attack(virtual_path) or is_path_traversal_attack(decoded):
+        return False, ""
+
+    # Reject empty virtual path
+    if not decoded:
+        return False, ""
+
+    # 6. Normalise to forward slashes and strip leading /
+    decoded = decoded.replace("\\", "/").lstrip("/")
+
+    # 7. Extract top-level name (first path component)
+    parts = decoded.split("/")
+    top_name = parts[0]
+    if not top_name:
+        return False, ""
+
+    # 8. Find matching shared entry by basename
+    matched_abs: Optional[str] = None
+    matched_type: Optional[str] = None
+    for abs_path, path_type in shared_paths:
+        if os.path.basename(abs_path) == top_name:
+            matched_abs = abs_path
+            matched_type = path_type
+            break
+
+    if matched_abs is None:
+        return False, ""
+
+    # 9a. Shared file: no sub-path allowed
+    if matched_type == "file":
+        if len(parts) > 1:
+            # Extra path components after a file entry – reject
+            return False, ""
+        if not os.path.isfile(matched_abs):
+            return False, ""
+        return True, matched_abs
+
+    # 9b. Shared directory: validate sub-path within sandbox
+    if matched_type == "directory":
+        sub_path = "/".join(parts[1:])
+        if not sub_path:
+            # Requesting the directory itself is not a file download – reject
+            return False, ""
+
+        candidate = os.path.join(matched_abs, sub_path)
+        try:
+            real_path = os.path.realpath(candidate)
+            real_shared = os.path.realpath(matched_abs)
+        except Exception:
+            return False, ""
+
+        # Verify the resolved path is inside the shared directory
+        try:
+            common = os.path.commonpath([real_path, real_shared])
+            if common != real_shared:
+                return False, ""
+        except ValueError:
+            return False, ""
+
+        if not os.path.isfile(real_path):
+            return False, ""
+
+        return True, real_path
+
+    return False, ""

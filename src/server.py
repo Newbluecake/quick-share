@@ -713,3 +713,327 @@ class DirectoryShareServer:
         if self.httpd:
             self.httpd.shutdown()
             self.httpd.server_close()
+
+
+class MultiShareServer:
+    """
+    Managed HTTP server for sharing multiple files and/or directories.
+
+    Always presents a unified file-list page regardless of the number of
+    shared paths, fulfilling the "single-file unified experience" requirement.
+    """
+
+    def __init__(
+        self,
+        paths,
+        port=None,
+        timeout_minutes=30,
+        max_sessions=10,
+        legacy_mode=False,
+    ):
+        self.paths = paths
+        self.port = find_available_port(custom_port=port) if port else find_available_port()
+        self.timeout_minutes = timeout_minutes
+        self.max_sessions = max_sessions
+        self.legacy_mode = legacy_mode
+
+        self.sessions = {}
+        self.session_lock = threading.Lock()
+
+        self.httpd = None
+        self.server_thread = None
+        self.shutdown_timer = None
+
+    def track_session(self, request_handler):
+        import uuid, time as _time
+        with self.session_lock:
+            cookie_header = request_handler.headers.get("Cookie", "")
+            session_id = self._extract_session_id_from_cookie(cookie_header)
+            if session_id and session_id in self.sessions:
+                return True, session_id
+            if len(self.sessions) >= self.max_sessions:
+                return False, None
+            if not session_id:
+                session_id = str(uuid.uuid4())
+            self.sessions[session_id] = {
+                "ip": request_handler.client_address[0],
+                "created_at": _time.time(),
+                "user_agent": request_handler.headers.get("User-Agent", "Unknown"),
+            }
+            return True, session_id
+
+    def _extract_session_id_from_cookie(self, cookie_header):
+        if not cookie_header:
+            return None
+        for part in cookie_header.split(";"):
+            part = part.strip()
+            if part.startswith("quick_share_session="):
+                return part.split("=", 1)[1]
+        return None
+
+    def start(self):
+        self.httpd = ThreadingHTTPServer(("", self.port), MultiShareHandler)
+        self.httpd.paths = self.paths
+        self.httpd.sessions = self.sessions
+        self.httpd.session_lock = self.session_lock
+        self.httpd.max_sessions = self.max_sessions
+        self.httpd.legacy_mode = self.legacy_mode
+        self.httpd.track_session = self.track_session
+        self.httpd._extract_session_id_from_cookie = self._extract_session_id_from_cookie
+
+        self.server_thread = threading.Thread(target=self.httpd.serve_forever)
+        self.server_thread.daemon = True
+        self.server_thread.start()
+
+        self.shutdown_timer = threading.Timer(
+            self.timeout_minutes * 60, self._shutdown_server
+        )
+        self.shutdown_timer.start()
+
+    def stop(self):
+        self._shutdown_server()
+
+    def _shutdown_server(self):
+        if self.shutdown_timer:
+            self.shutdown_timer.cancel()
+        if self.httpd:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+
+
+class MultiShareHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for MultiShareServer."""
+
+    def do_GET(self):
+        allowed, session_id = self.server.track_session(self)
+        if not allowed:
+            self.send_error(403, "Session limit reached")
+            return
+        self.session_id = session_id
+
+        path = self.path
+        if path == "/" or path.startswith("/?"):
+            self._serve_root_page()
+        elif path.startswith("/api/"):
+            self._handle_api_request()
+        elif path.startswith("/files/"):
+            self._serve_file_download()
+        elif path.startswith("/download/all.zip"):
+            self._serve_all_as_zip()
+        else:
+            self.send_error(404, "Not found")
+
+    def _serve_root_page(self):
+        use_legacy = (
+            getattr(self.server, "legacy_mode", False)
+            or "legacy=1" in self.path
+        )
+        try:
+            from .templates import generate_multi_share_spa_html, generate_multi_share_legacy_html
+        except ImportError:
+            from templates import generate_multi_share_spa_html, generate_multi_share_legacy_html
+
+        if use_legacy:
+            html = generate_multi_share_legacy_html(self.server.paths)
+        else:
+            html = generate_multi_share_spa_html(len(self.server.paths))
+
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self._set_session_cookie_if_needed()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_api_request(self):
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
+        if parsed.path == "/api/tree":
+            request_path = params.get("path", ["/"])[0]
+            if request_path == "/":
+                try:
+                    from .directory_handler import get_multi_share_root_structure
+                except ImportError:
+                    from directory_handler import get_multi_share_root_structure
+                data = get_multi_share_root_structure(self.server.paths)
+                self._send_json_response(data)
+            else:
+                top_name = request_path.lstrip("/").split("/")[0]
+                sub_rel = "/".join(request_path.lstrip("/").split("/")[1:])
+                matched_abs = None
+                for abs_path, path_type in self.server.paths:
+                    if os.path.basename(abs_path) == top_name and path_type == "directory":
+                        matched_abs = abs_path
+                        break
+                if matched_abs is None:
+                    self._send_json_error(404, "Directory not found")
+                    return
+                target = os.path.join(matched_abs, sub_rel) if sub_rel else matched_abs
+                real_target = os.path.realpath(target)
+                real_base = os.path.realpath(matched_abs)
+                try:
+                    if os.path.commonpath([real_target, real_base]) != real_base:
+                        self._send_json_error(403, "Access denied")
+                        return
+                except ValueError:
+                    self._send_json_error(403, "Access denied")
+                    return
+                if not os.path.isdir(real_target):
+                    self._send_json_error(400, "Not a directory")
+                    return
+                try:
+                    from .directory_handler import get_directory_structure
+                except ImportError:
+                    from directory_handler import get_directory_structure
+                data = get_directory_structure(matched_abs, real_target)
+                self._send_json_response(data)
+
+        elif parsed.path == "/api/content":
+            request_path = params.get("path", [""])[0]
+            if not request_path:
+                self._send_json_error(400, "Missing path parameter")
+                return
+            try:
+                from .security import validate_multi_share_path
+            except ImportError:
+                from security import validate_multi_share_path
+            ok, real_path = validate_multi_share_path(
+                "/files/" + request_path.lstrip("/"), self.server.paths
+            )
+            if not ok:
+                self._send_json_error(403, "Access denied")
+                return
+            if not os.path.isfile(real_path):
+                self._send_json_error(404, "File not found")
+                return
+            try:
+                file_size = os.path.getsize(real_path)
+                if file_size > 1024 * 1024:
+                    self._send_json_error(413, "File too large for preview")
+                    return
+                with open(real_path, "rb") as fh:
+                    raw = fh.read()
+                content = raw.decode("utf-8")
+                import mimetypes
+                mime, _ = mimetypes.guess_type(real_path)
+                self._send_json_response({
+                    "path": request_path,
+                    "content": content,
+                    "size": file_size,
+                    "encoding": "utf-8",
+                    "type": mime or "text/plain",
+                })
+            except UnicodeDecodeError:
+                self._send_json_error(415, "Binary file not supported for preview")
+            except Exception as exc:
+                self._send_json_error(500, str(exc))
+        else:
+            self._send_json_error(404, "API endpoint not found")
+
+    def _serve_file_download(self):
+        try:
+            from .security import validate_multi_share_path
+        except ImportError:
+            from security import validate_multi_share_path
+        ok, real_path = validate_multi_share_path(self.path, self.server.paths)
+        if not ok:
+            self.send_error(403, "Access denied")
+            return
+        filename = os.path.basename(real_path)
+        try:
+            self._stream_file_with_headers(real_path, filename)
+        except Exception:
+            self.send_error(500, "Internal server error")
+
+    def _serve_all_as_zip(self):
+        try:
+            from .directory_handler import stream_multi_paths_as_zip
+        except ImportError:
+            from directory_handler import stream_multi_paths_as_zip
+
+        self.send_response(200)
+        self._set_session_cookie_if_needed()
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", 'attachment; filename="quick-share.zip"')
+        self.end_headers()
+        try:
+            stream_multi_paths_as_zip(self.wfile, self.server.paths, progress_callback=True)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _stream_file_with_headers(self, file_path, filename):
+        try:
+            from .logger import (
+                format_download_start, format_download_progress,
+                format_download_complete, format_download_interrupted,
+                format_download_error, get_timestamp,
+            )
+            from .directory_handler import format_file_size
+        except ImportError:
+            from logger import (
+                format_download_start, format_download_progress,
+                format_download_complete, format_download_interrupted,
+                format_download_error, get_timestamp,
+            )
+            from directory_handler import format_file_size
+
+        file_size = os.path.getsize(file_path)
+        client_ip = self.client_address[0]
+
+        self.send_response(200)
+        self._set_session_cookie_if_needed()
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(file_size))
+        self.end_headers()
+
+        tracker = DownloadProgressTracker(client_ip, filename, file_size)
+        ts = get_timestamp()
+        print(format_download_start(ts, client_ip, filename, format_file_size(file_size)))
+
+        try:
+            with open(file_path, "rb") as fh:
+                while True:
+                    chunk = fh.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    if tracker.update(len(chunk)):
+                        pct = tracker.get_progress_percentage()
+                        ts = get_timestamp()
+                        print(format_download_progress(ts, client_ip, tracker.bytes_transferred, file_size, pct))
+            tracker.complete()
+            duration = time.time() - tracker.start_time
+            ts = get_timestamp()
+            print(format_download_complete(ts, client_ip, filename, file_size, duration))
+        except (BrokenPipeError, ConnectionResetError):
+            ts = get_timestamp()
+            print(format_download_interrupted(ts, client_ip, filename, tracker.bytes_transferred, file_size))
+        except Exception as exc:
+            ts = get_timestamp()
+            print(format_download_error(ts, client_ip, filename, str(exc)))
+
+    def _send_json_response(self, data, status=200):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self._set_session_cookie_if_needed()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json_error(self, status, message):
+        self._send_json_response({"error": message, "status": status}, status)
+
+    def _set_session_cookie_if_needed(self):
+        if hasattr(self, "session_id") and self.session_id:
+            self.send_header(
+                "Set-Cookie",
+                f"quick_share_session={self.session_id}; Path=/; HttpOnly",
+            )
+
+    def log_message(self, format, *args):
+        pass
