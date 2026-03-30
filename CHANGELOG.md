@@ -5,6 +5,33 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-30
+
+### Added
+- **Multi-path sharing** - Support passing multiple files and directories in a single command
+  - `quick-share file1.txt file2.pdf ./docs` shares all items at once
+  - Shell glob patterns naturally expand (e.g., `quick-share *.pdf`)
+  - Unified file list page for all scenarios (including single file)
+  - Per-item download and "Download All" as ZIP
+  - Folder expansion and browsing in the web UI
+- New `MultiShareServer` and `MultiShareHandler` classes with full route dispatch
+  - `/api/tree` and `/api/content` JSON API endpoints
+  - `/files/<path>` for individual file downloads
+  - `/download/all.zip` for streaming ZIP of all shared items
+- Vue 3 SPA template (`generate_multi_share_spa_html()`) with tree expansion
+- Server-rendered legacy template (`generate_multi_share_legacy_html()`)
+- Name conflict detection: CLI reports error when duplicate basenames are passed
+- Path security: `validate_multi_share_path()` with commonpath sandboxing and traversal defence
+
+### Changed
+- CLI argument `file_path` changed to `file_paths` with `nargs='+'` for multi-path support
+- `main()` now always routes through `MultiShareServer` (unified experience)
+- Session-based counting (`-n`) for multi-path sharing, consistent with directory sharing
+
+### Fixed
+- Fixed test suite to match `MultiShareServer` refactor (test_integration, test_server, test_updater)
+- Fixed `DirectoryShareHandler` test helper missing `client_address` attribute
+
 ## [1.2.0] - 2026-02-05
 
 ### Added
@@ -29,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed directory ZIP download progress tracking by calculating size inline
 
+[1.3.0]: https://github.com/Newbluecake/quick-share/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.1.0
 
