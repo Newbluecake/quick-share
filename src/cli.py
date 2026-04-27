@@ -150,7 +150,7 @@ def validate_arguments(args):
         ValueError: If arguments are invalid.
     """
     # Either file paths, --upload, or --serve must be provided
-    if not args.file_paths and args.upload is None and not args.serve:
+    if not args.file_paths and args.upload is None and not getattr(args, 'serve', False):
         raise ValueError(
             "Provide one or more files/directories to share, "
             "or use --upload to start an upload server, "

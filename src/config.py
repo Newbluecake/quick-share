@@ -52,3 +52,18 @@ def set_peer_config(address: str, secret: str):
     config = load_config()
     config["peer"] = {"address": address, "secret": secret}
     save_config(config)
+
+
+def get_last_dir() -> Optional[str]:
+    """Return the last directory used in a file dialog, or None."""
+    return load_config().get("last_dir")
+
+
+def set_last_dir(path: str):
+    """Remember a directory for the next file dialog."""
+    config = load_config()
+    if os.path.isfile(path):
+        path = os.path.dirname(path)
+    if path and os.path.isdir(path):
+        config["last_dir"] = path
+        save_config(config)

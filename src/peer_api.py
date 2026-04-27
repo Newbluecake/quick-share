@@ -237,9 +237,8 @@ def _handle_peer_receive(handler, server_config: dict) -> bool:
     try:
         for uf in uploaded:
             final_path = save_uploaded_file(uf, save_dir)
-            saved.append(os.path.basename(final_path))
-            size = uf.size
-            print(format_peer_transfer_complete("received", uf.filename, size))
+            saved.append({"name": os.path.basename(final_path), "size": uf.size})
+            print(format_peer_transfer_complete("received", uf.filename, uf.size))
     except (ValueError, OSError) as exc:
         _send_json_error(handler, 500, str(exc))
         return True

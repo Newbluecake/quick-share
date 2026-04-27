@@ -1,5 +1,6 @@
 import sys
 import os
+import signal
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -15,6 +16,26 @@ from .server import (
 )
 from .utils import format_file_size, parse_duration
 from . import logger
+
+# Signal handling state for graceful/force shutdown
+_active_server = None
+_shutdown_in_progress = False
+
+
+def _sigint_handler(signum, frame):
+    """Handle SIGINT: first Ctrl+C = graceful stop, second = force quit."""
+    global _shutdown_in_progress
+    if _active_server and not _shutdown_in_progress:
+        _shutdown_in_progress = True
+        print("\nStopping server...")
+        _active_server.stop()
+        print("Server stopped. Press Ctrl+C again to force quit if stuck.")
+    elif _shutdown_in_progress:
+        print("\nForce quitting...")
+        os._exit(1)
+    else:
+        print("\nExiting...")
+        sys.exit(0)
 
 
 def detect_path_type(path: str) -> str:
@@ -218,6 +239,9 @@ def main() -> None:
     Accepts one or more file/directory paths and serves them via
     MultiShareServer, which always presents a unified file-list page.
     """
+    # Register SIGINT handler for graceful/force shutdown
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     # Check for update command first (before normal argument parsing)
     from .cli import is_update_command, is_config_command, handle_config_command
     if is_update_command():
@@ -424,6 +448,8 @@ def main() -> None:
             print(msg)
 
         # Start server
+        global _active_server
+        _active_server = server
         try:
             server.start()
 
@@ -448,6 +474,7 @@ def main() -> None:
                         file_items = [
                             (p, t) for p, t in shared_paths if t == "file"
                         ]
+                        peer_transfer_done = False
                         if file_items:
                             files = [
                                 {"name": os.path.basename(p), "size": os.path.getsize(p)}
@@ -468,6 +495,7 @@ def main() -> None:
                                 else:
                                     err = send_result.get("message", "unknown")
                                     print(f"[{logger.get_timestamp()}] Peer transfer failed: {err}")
+                                peer_transfer_done = True
                             elif dl_result.get("status") != "cancelled":
                                 err = dl_result.get("message", dl_result.get("error", "unknown"))
                                 print(f"[{logger.get_timestamp()}] Peer download request failed: {err}")
@@ -482,6 +510,9 @@ def main() -> None:
                             elif ul_result.get("status") != "cancelled":
                                 err = ul_result.get("message", ul_result.get("error", "unknown"))
                                 print(f"[{logger.get_timestamp()}] Peer upload request failed: {err}")
+                            peer_transfer_done = True
+                        if peer_transfer_done:
+                            server.stop()
                     else:
                         err = result.get("message", result.get("error", "unknown"))
                         print(format_peer_unreachable(address, err))
@@ -492,9 +523,16 @@ def main() -> None:
             while server.server_thread and server.server_thread.is_alive():
                 server.server_thread.join(timeout=0.5)
         except KeyboardInterrupt:
-            print("\nStopping server...")
-            server.stop()
+            # Safety net for direct KeyboardInterrupt (e.g. in tests)
+            global _shutdown_in_progress
+            if not _shutdown_in_progress:
+                _shutdown_in_progress = True
+                print("\nStopping server...")
+                server.stop()
+                print("Server stopped. Press Ctrl+C again to force quit if stuck.")
             sys.exit(0)
+        finally:
+            _active_server = None
 
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)

@@ -10,6 +10,21 @@ import subprocess
 import sys
 from typing import List, Optional
 
+# Lazy imports for config — avoid touching ~/.quick-share/ at module level
+def _get_last_dir():
+    try:
+        from .config import get_last_dir
+    except ImportError:
+        from config import get_last_dir
+    return get_last_dir()
+
+def _save_last_dir(path):
+    try:
+        from .config import set_last_dir
+    except ImportError:
+        from config import set_last_dir
+    set_last_dir(path)
+
 
 def _detect_tool() -> str:
     """Detect the best available dialog tool for the current platform.
@@ -48,17 +63,22 @@ def open_file_dialog(multiple: bool = True) -> List[str]:
         List of selected file paths (empty if cancelled).
     """
     tool = _detect_tool()
+    last_dir = _get_last_dir()
 
     if tool == "zenity":
-        return _zenity_file_dialog(multiple)
+        paths = _zenity_file_dialog(multiple, last_dir)
     elif tool == "kdialog":
-        return _kdialog_file_dialog(multiple)
+        paths = _kdialog_file_dialog(multiple, last_dir)
     elif tool == "osascript":
-        return _osascript_file_dialog(multiple)
+        paths = _osascript_file_dialog(multiple)
     elif tool == "powershell":
-        return _powershell_file_dialog(multiple)
+        paths = _powershell_file_dialog(multiple, last_dir)
     else:
-        return _stdio_file_dialog(multiple)
+        paths = _stdio_file_dialog(multiple)
+
+    if paths:
+        _save_last_dir(paths[0])
+    return paths
 
 
 def open_directory_dialog() -> Optional[str]:
@@ -68,17 +88,22 @@ def open_directory_dialog() -> Optional[str]:
         Selected directory path, or None if cancelled.
     """
     tool = _detect_tool()
+    last_dir = _get_last_dir()
 
     if tool == "zenity":
-        return _zenity_directory_dialog()
+        path = _zenity_directory_dialog(last_dir)
     elif tool == "kdialog":
-        return _kdialog_directory_dialog()
+        path = _kdialog_directory_dialog(last_dir)
     elif tool == "osascript":
-        return _osascript_directory_dialog()
+        path = _osascript_directory_dialog()
     elif tool == "powershell":
-        return _powershell_directory_dialog()
+        path = _powershell_directory_dialog(last_dir)
     else:
-        return _stdio_directory_dialog()
+        path = _stdio_directory_dialog()
+
+    if path:
+        _save_last_dir(path)
+    return path
 
 
 def open_save_dialog(default_name: str = "") -> Optional[str]:
@@ -91,26 +116,33 @@ def open_save_dialog(default_name: str = "") -> Optional[str]:
         Selected path, or None if cancelled.
     """
     tool = _detect_tool()
+    last_dir = _get_last_dir()
 
     if tool == "zenity":
-        return _zenity_save_dialog(default_name)
+        path = _zenity_save_dialog(default_name, last_dir)
     elif tool == "kdialog":
-        return _kdialog_save_dialog(default_name)
+        path = _kdialog_save_dialog(default_name, last_dir)
     elif tool == "osascript":
-        return _osascript_save_dialog(default_name)
+        path = _osascript_save_dialog(default_name)
     elif tool == "powershell":
-        return _powershell_save_dialog(default_name)
+        path = _powershell_save_dialog(default_name, last_dir)
     else:
-        return _stdio_save_dialog(default_name)
+        path = _stdio_save_dialog(default_name)
+
+    if path:
+        _save_last_dir(path)
+    return path
 
 
 # -- zenity ----------------------------------------------------------
 
-def _zenity_file_dialog(multiple: bool) -> List[str]:
+def _zenity_file_dialog(multiple: bool, last_dir: Optional[str] = None) -> List[str]:
     args = ["zenity", "--file-selection"]
     if multiple:
         args.append("--multiple")
         args.append("--separator=:")
+    if last_dir:
+        args.extend(["--filename", last_dir + os.sep])
     try:
         result = subprocess.run(
             args, capture_output=True, text=True, timeout=300
@@ -127,11 +159,13 @@ def _zenity_file_dialog(multiple: bool) -> List[str]:
         return []
 
 
-def _zenity_directory_dialog() -> Optional[str]:
+def _zenity_directory_dialog(last_dir: Optional[str] = None) -> Optional[str]:
+    args = ["zenity", "--file-selection", "--directory"]
+    if last_dir:
+        args.extend(["--filename", last_dir + os.sep])
     try:
         result = subprocess.run(
-            ["zenity", "--file-selection", "--directory"],
-            capture_output=True, text=True, timeout=300,
+            args, capture_output=True, text=True, timeout=300,
         )
         if result.returncode != 0:
             return None
@@ -140,10 +174,15 @@ def _zenity_directory_dialog() -> Optional[str]:
         return None
 
 
-def _zenity_save_dialog(default_name: str) -> Optional[str]:
+def _zenity_save_dialog(default_name: str, last_dir: Optional[str] = None) -> Optional[str]:
     args = ["zenity", "--file-selection", "--save", "--confirm-overwrite"]
     if default_name:
-        args.extend(["--filename", default_name])
+        if last_dir:
+            args.extend(["--filename", os.path.join(last_dir, default_name)])
+        else:
+            args.extend(["--filename", default_name])
+    elif last_dir:
+        args.extend(["--filename", last_dir + os.sep])
     try:
         result = subprocess.run(
             args, capture_output=True, text=True, timeout=300,
@@ -157,8 +196,10 @@ def _zenity_save_dialog(default_name: str) -> Optional[str]:
 
 # -- kdialog ---------------------------------------------------------
 
-def _kdialog_file_dialog(multiple: bool) -> List[str]:
+def _kdialog_file_dialog(multiple: bool, last_dir: Optional[str] = None) -> List[str]:
     args = ["kdialog", "--getopenfilename"]
+    if last_dir:
+        args.append(last_dir)
     if multiple:
         args.append("--multiple")
         args.append("--separate-output")
@@ -176,11 +217,13 @@ def _kdialog_file_dialog(multiple: bool) -> List[str]:
         return []
 
 
-def _kdialog_directory_dialog() -> Optional[str]:
+def _kdialog_directory_dialog(last_dir: Optional[str] = None) -> Optional[str]:
+    args = ["kdialog", "--getexistingdirectory"]
+    if last_dir:
+        args.append(last_dir)
     try:
         result = subprocess.run(
-            ["kdialog", "--getexistingdirectory"],
-            capture_output=True, text=True, timeout=300,
+            args, capture_output=True, text=True, timeout=300,
         )
         if result.returncode != 0:
             return None
@@ -189,9 +232,13 @@ def _kdialog_directory_dialog() -> Optional[str]:
         return None
 
 
-def _kdialog_save_dialog(default_name: str) -> Optional[str]:
+def _kdialog_save_dialog(default_name: str, last_dir: Optional[str] = None) -> Optional[str]:
     args = ["kdialog", "--getsavefilename"]
-    if default_name:
+    if last_dir and default_name:
+        args.append(os.path.join(last_dir, default_name))
+    elif last_dir:
+        args.append(last_dir)
+    elif default_name:
         args.append(default_name)
     try:
         result = subprocess.run(
@@ -270,13 +317,15 @@ def _osascript_save_dialog(default_name: str) -> Optional[str]:
 
 # -- PowerShell (Windows) --------------------------------------------
 
-def _powershell_file_dialog(multiple: bool) -> List[str]:
+def _powershell_file_dialog(multiple: bool, last_dir: Optional[str] = None) -> List[str]:
     multiselect = "$true" if multiple else "$false"
+    init_dir = f"$fd.InitialDirectory = '{last_dir}'" if last_dir else ""
     script = f"""
 Add-Type -AssemblyName System.Windows.Forms
 $fd = New-Object System.Windows.Forms.OpenFileDialog
 $fd.Multiselect = {multiselect}
 $fd.Title = "Select files to share"
+{init_dir}
 if ($fd.ShowDialog() -eq 'OK') {{ $fd.FileNames -join '|' }}
 """
     try:
@@ -294,12 +343,14 @@ if ($fd.ShowDialog() -eq 'OK') {{ $fd.FileNames -join '|' }}
         return []
 
 
-def _powershell_directory_dialog() -> Optional[str]:
-    script = """
+def _powershell_directory_dialog(last_dir: Optional[str] = None) -> Optional[str]:
+    init_dir = f"$fb.SelectedPath = '{last_dir}'" if last_dir else ""
+    script = f"""
 Add-Type -AssemblyName System.Windows.Forms
 $fb = New-Object System.Windows.Forms.FolderBrowserDialog
 $fb.Description = "Select a folder to share"
-if ($fb.ShowDialog() -eq 'OK') { $fb.SelectedPath }
+{init_dir}
+if ($fb.ShowDialog() -eq 'OK') {{ $fb.SelectedPath }}
 """
     try:
         result = subprocess.run(
@@ -313,8 +364,8 @@ if ($fb.ShowDialog() -eq 'OK') { $fb.SelectedPath }
         return None
 
 
-def _powershell_save_dialog(default_name: str) -> Optional[str]:
-    folder = _powershell_directory_dialog()
+def _powershell_save_dialog(default_name: str, last_dir: Optional[str] = None) -> Optional[str]:
+    folder = _powershell_directory_dialog(last_dir)
     if folder is None:
         return None
     if default_name:

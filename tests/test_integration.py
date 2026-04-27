@@ -19,7 +19,8 @@ def test_full_application_flow(tmp_path):
 
     # Mock MultiShareServer (main() now always uses MultiShareServer)
     with patch('src.main.MultiShareServer') as mock_server_class, \
-         patch('src.main.find_available_port', return_value=8080):
+         patch('src.main.find_available_port', return_value=8080), \
+         patch('src.config.get_peer_config', return_value=None):
         server_instance = MagicMock()
         server_instance.server_thread = MagicMock()
         server_instance.server_thread.is_alive.return_value = False
@@ -58,7 +59,8 @@ def test_application_with_defaults(tmp_path):
     test_file.write_text("Default test")
 
     with patch('src.main.MultiShareServer') as mock_server_class, \
-         patch('src.main.find_available_port', return_value=8000):
+         patch('src.main.find_available_port', return_value=8000), \
+         patch('src.config.get_peer_config', return_value=None):
         server_instance = MagicMock()
         server_instance.server_thread = None
         mock_server_class.return_value = server_instance
@@ -87,7 +89,8 @@ def test_keyboard_interrupt_during_server(tmp_path):
     test_file.write_text("Interrupt test")
 
     with patch('src.main.MultiShareServer') as mock_server_class, \
-         patch('src.main.find_available_port', return_value=8000):
+         patch('src.main.find_available_port', return_value=8000), \
+         patch('src.config.get_peer_config', return_value=None):
         server_instance = MagicMock()
 
         # Simulate KeyboardInterrupt when start is called
@@ -119,7 +122,8 @@ def test_real_file_validation_integration(tmp_path):
 
     with patch('sys.argv', ['quick-share', str(test_dir)]):
         with patch('src.main.MultiShareServer') as mock_server_cls, \
-             patch('src.main.find_available_port', return_value=8000):
+             patch('src.main.find_available_port', return_value=8000), \
+             patch('src.config.get_peer_config', return_value=None):
             mock_server = MagicMock()
             mock_server.server_thread = None
             mock_server_cls.return_value = mock_server
@@ -167,7 +171,10 @@ def test_various_timeout_formats(tmp_path):
 
     for timeout_str, expected_minutes in test_cases:
         with patch('src.main.MultiShareServer') as mock_server_class, \
-             patch('src.main.find_available_port', return_value=8000):
+             patch('src.main.find_available_port', return_value=8000), \
+             patch('src.main.get_local_ip', return_value='127.0.0.1'), \
+             patch('src.main.get_all_lan_ips', return_value=[('eth0', '127.0.0.1')]), \
+             patch('src.config.get_peer_config', return_value=None):
             server_instance = MagicMock()
             server_instance.server_thread = None
             mock_server_class.return_value = server_instance
