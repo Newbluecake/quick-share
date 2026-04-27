@@ -5,6 +5,11 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2026-04-28
+
+### Fixed
+- **Python 3.13 compatibility** — replaced removed `cgi.FieldStorage` with a pure-Python multipart/form-data parser, fixing `ModuleNotFoundError: No module named 'cgi'` that caused peer file transfers to fail
+
 ## [1.8.0] - 2026-04-28
 
 ### Added

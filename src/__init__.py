@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 
 
 def _get_commit():
