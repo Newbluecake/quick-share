@@ -1648,3 +1648,79 @@ class UploadServer:
         if self.httpd:
             self.httpd.shutdown()
             self.httpd.server_close()
+
+
+# ======================================================================
+# Serve Server (peer-only mode)
+# ======================================================================
+
+
+class ServeHandler(BaseHTTPRequestHandler):
+    """Minimal handler for serve mode — only exposes /api/peer/* endpoints."""
+
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        if path.startswith("/api/peer/"):
+            try:
+                from .peer_api import handle_peer_api
+            except ImportError:
+                from peer_api import handle_peer_api
+            server_config = {
+                "peer_secret": getattr(self.server, "peer_secret", None),
+            }
+            handle_peer_api(self, server_config)
+            return
+        self.send_error(404, "Not found")
+
+    def do_GET(self):
+        self.send_error(404, "Server mode — peer API only")
+
+    def log_message(self, format, *args):
+        pass
+
+
+class ServeServer:
+    """Minimal HTTP server for peer-only serve mode.
+
+    Usage::
+
+        server = ServeServer(port=8080, timeout_minutes=30, peer_secret="key")
+        server.start()
+    """
+
+    def __init__(
+        self,
+        port=None,
+        timeout_minutes=30,
+        peer_secret=None,
+    ):
+        self.port = find_available_port(custom_port=port) if port else find_available_port()
+        self.timeout_minutes = timeout_minutes
+        self.peer_secret = peer_secret
+
+        self.httpd = None
+        self.server_thread = None
+        self.shutdown_timer = None
+
+    def start(self):
+        self.httpd = ThreadingHTTPServer(("", self.port), ServeHandler)
+        self.httpd.peer_secret = self.peer_secret
+
+        self.server_thread = threading.Thread(target=self.httpd.serve_forever)
+        self.server_thread.daemon = True
+        self.server_thread.start()
+
+        self.shutdown_timer = threading.Timer(
+            self.timeout_minutes * 60, self._shutdown_server,
+        )
+        self.shutdown_timer.start()
+
+    def stop(self):
+        self._shutdown_server()
+
+    def _shutdown_server(self):
+        if self.shutdown_timer:
+            self.shutdown_timer.cancel()
+        if self.httpd:
+            self.httpd.shutdown()
+            self.httpd.server_close()

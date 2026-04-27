@@ -124,6 +124,12 @@ def parse_arguments(args=None):
         help="Password required for uploading"
     )
 
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start in server-only mode (peer API only, no file sharing)"
+    )
+
     return parser.parse_args(args)
 
 def validate_arguments(args):
@@ -136,11 +142,12 @@ def validate_arguments(args):
     Raises:
         ValueError: If arguments are invalid.
     """
-    # Either file paths or --upload must be provided
-    if not args.file_paths and args.upload is None:
+    # Either file paths, --upload, or --serve must be provided
+    if not args.file_paths and args.upload is None and not args.serve:
         raise ValueError(
             "Provide one or more files/directories to share, "
-            "or use --upload to start an upload server"
+            "or use --upload to start an upload server, "
+            "or use --serve to start a peer-only server"
         )
 
     # --upload-password requires --upload

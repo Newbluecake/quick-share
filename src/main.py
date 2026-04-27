@@ -10,6 +10,7 @@ from .server import (
     DirectoryShareServer,
     MultiShareServer,
     UploadServer,
+    ServeServer,
     find_available_port,
 )
 from .utils import format_file_size, parse_duration
@@ -261,9 +262,31 @@ def main() -> None:
         server_timeout_minutes = timeout_seconds / 60
 
         # ---------------------------------------------------------------
+        # Serve mode (peer-only, no file sharing or upload page)
+        # ---------------------------------------------------------------
+        if args.serve:
+            server = ServeServer(
+                port=port,
+                timeout_minutes=server_timeout_minutes,
+                peer_secret=peer_secret,
+            )
+            # Print startup message
+            print("Server mode started (peer API only)")
+            print(f"Port: {port}")
+            print("")
+            for iface, iface_ip in all_ips:
+                print(f"  {iface:12} http://{iface_ip}:{port}")
+            print("")
+            if peer_secret:
+                print(f"Peer secret: configured")
+            else:
+                print("Peer secret: not configured (use quick-share config --peer ADDR --secret KEY)")
+            print(f"Timeout: {timeout_seconds} seconds")
+
+        # ---------------------------------------------------------------
         # Upload mode detection
         # ---------------------------------------------------------------
-        if args.upload is not None:
+        elif args.upload is not None:
             upload_save_dir = os.path.abspath(
                 args.upload if args.upload != '.' else os.getcwd()
             )
