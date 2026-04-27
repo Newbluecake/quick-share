@@ -1710,10 +1710,11 @@ class ServeServer:
         self.server_thread.daemon = True
         self.server_thread.start()
 
-        self.shutdown_timer = threading.Timer(
-            self.timeout_minutes * 60, self._shutdown_server,
-        )
-        self.shutdown_timer.start()
+        if self.timeout_minutes > 0:
+            self.shutdown_timer = threading.Timer(
+                self.timeout_minutes * 60, self._shutdown_server,
+            )
+            self.shutdown_timer.start()
 
     def stop(self):
         self._shutdown_server()

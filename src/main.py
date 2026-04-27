@@ -271,7 +271,7 @@ def main() -> None:
         if args.serve:
             server = ServeServer(
                 port=port,
-                timeout_minutes=server_timeout_minutes,
+                timeout_minutes=0,
                 peer_secret=peer_secret,
             )
             # Print startup message
@@ -285,7 +285,7 @@ def main() -> None:
                 print(f"Peer secret: configured")
             else:
                 print("Peer secret: not configured (use quick-share config --peer ADDR --secret KEY)")
-            print(f"Timeout: {timeout_seconds} seconds")
+            print("Timeout: none (running indefinitely)")
 
         # ---------------------------------------------------------------
         # Upload mode detection
