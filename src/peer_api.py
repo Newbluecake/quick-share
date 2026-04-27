@@ -220,22 +220,32 @@ def _handle_peer_receive(handler, server_config: dict) -> bool:
         _send_json_error(handler, 400, "No files received")
         return True
 
-    # Ensure save dir exists
-    if os.path.isfile(save_dir):
-        # save_dir is a file path with filename — use its parent
-        save_dir = os.path.dirname(save_dir)
-    os.makedirs(save_dir, exist_ok=True)
+    # If save_dir is not an existing directory, it is a file path from a
+    # save dialog (the target file does not exist yet).  Extract the parent
+    # directory so we can save into it.
+    if not os.path.isdir(save_dir):
+        parent = os.path.dirname(save_dir)
+        if parent:
+            save_dir = parent
+    try:
+        os.makedirs(save_dir, exist_ok=True)
+    except OSError as exc:
+        _send_json_error(handler, 500, f"Cannot create save directory: {exc}")
+        return True
 
     saved = []
-    for uf in uploaded:
-        try:
+    try:
+        for uf in uploaded:
             final_path = save_uploaded_file(uf, save_dir)
             saved.append(os.path.basename(final_path))
             size = uf.size
             print(format_peer_transfer_complete("received", uf.filename, size))
-        except (ValueError, OSError) as exc:
-            _send_json_error(handler, 500, str(exc))
-            return True
+    except (ValueError, OSError) as exc:
+        _send_json_error(handler, 500, str(exc))
+        return True
+    except Exception as exc:
+        _send_json_error(handler, 500, f"Unexpected error saving file: {exc}")
+        return True
 
     _send_json(handler, {"status": "ok", "files": saved, "count": len(saved)})
     return True
