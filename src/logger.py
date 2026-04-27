@@ -413,3 +413,53 @@ def format_upload_error(
     """
     return f"[{timestamp}] ❌ {client_ip} - Error: {filename} - {error_message}"
 
+
+# ---------------------------------------------------------------------------
+# Peer event logging
+# ---------------------------------------------------------------------------
+
+
+def format_peer_connected(address: str) -> str:
+    """Format peer connection success message."""
+    return f"[{get_timestamp()}] ✓ Connected to peer: {address}"
+
+
+def format_peer_unreachable(address: str, error: str) -> str:
+    """Format peer unreachable warning."""
+    return f"[{get_timestamp()}] ⚠ Peer unreachable: {address} ({error})"
+
+
+def format_peer_upload_request(peer_addr: str) -> str:
+    """Format incoming upload request from peer."""
+    return f"[{get_timestamp()}] ↗ Upload request from {peer_addr}"
+
+
+def format_peer_download_request(peer_addr: str, file_count: int) -> str:
+    """Format incoming download request from peer."""
+    suffix = f" ({file_count} files)" if file_count > 0 else ""
+    return f"[{get_timestamp()}] ↘ Download request from {peer_addr}{suffix}"
+
+
+def format_peer_transfer_complete(
+    direction: str, filename: str, size_bytes: int
+) -> str:
+    """Format peer transfer completion message.
+
+    Args:
+        direction: "sent" or "received"
+        filename: File name
+        size_bytes: File size in bytes
+    """
+    try:
+        from .directory_handler import format_file_size
+    except ImportError:
+        from directory_handler import format_file_size
+    size_str = format_file_size(size_bytes)
+    verb = "Sent" if direction == "sent" else "Received"
+    return f"[{get_timestamp()}] ✓ {verb}: {filename} ({size_str})"
+
+
+def format_peer_auth_failed(peer_addr: str) -> str:
+    """Format peer authentication failure."""
+    return f"[{get_timestamp()}] ✗ Auth failed from {peer_addr}"
+

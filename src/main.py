@@ -218,10 +218,12 @@ def main() -> None:
     MultiShareServer, which always presents a unified file-list page.
     """
     # Check for update command first (before normal argument parsing)
-    from .cli import is_update_command
+    from .cli import is_update_command, is_config_command, handle_config_command
     if is_update_command():
         from .updater import run_update
         sys.exit(run_update())
+    if is_config_command():
+        sys.exit(handle_config_command())
 
     try:
         # Parse and validate arguments
@@ -241,6 +243,11 @@ def main() -> None:
 
         # Get all available LAN IPs (for multi-IP display)
         all_ips = get_all_lan_ips()
+
+        # Read peer config for inter-instance communication
+        from .config import get_peer_config
+        peer_config = get_peer_config()
+        peer_secret = peer_config["secret"] if peer_config else None
 
         # Determine port
         try:
@@ -269,6 +276,7 @@ def main() -> None:
                     timeout_minutes=server_timeout_minutes,
                     max_sessions=args.max_downloads,
                     upload_password=args.upload_password,
+                    peer_secret=peer_secret,
                 )
 
                 # Print startup message
@@ -322,6 +330,7 @@ def main() -> None:
                     upload_enabled=True,
                     upload_save_dir=upload_save_dir,
                     upload_password=args.upload_password,
+                    peer_secret=peer_secret,
                 )
 
                 # Print startup message
@@ -372,6 +381,7 @@ def main() -> None:
                 timeout_minutes=server_timeout_minutes,
                 max_sessions=args.max_downloads,
                 legacy_mode=args.legacy,
+                peer_secret=peer_secret,
             )
 
             # Print startup message
@@ -386,9 +396,30 @@ def main() -> None:
             )
             print(msg)
 
-        # Start server and wait for completion
+        # Start server
         try:
             server.start()
+
+            # Connect to configured peer
+            if peer_config:
+                from .peer_client import PeerClient
+                from .logger import (
+                    format_peer_connected,
+                    format_peer_unreachable,
+                )
+                address = peer_config["address"]
+                secret = peer_config["secret"]
+                client = PeerClient(address, secret)
+                try:
+                    result = client.say_hello(local_ip, port)
+                    if result.get("status") == "ok":
+                        print(format_peer_connected(address))
+                    else:
+                        err = result.get("message", result.get("error", "unknown"))
+                        print(format_peer_unreachable(address, err))
+                except Exception as e:
+                    print(format_peer_unreachable(address, str(e)))
+
             # Use timeout loop to allow Ctrl+C to work immediately
             while server.server_thread and server.server_thread.is_alive():
                 server.server_thread.join(timeout=0.5)

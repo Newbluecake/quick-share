@@ -828,6 +828,7 @@ class MultiShareServer:
         upload_enabled=False,
         upload_save_dir=None,
         upload_password=None,
+        peer_secret=None,
     ):
         self.paths = paths
         self.port = find_available_port(custom_port=port) if port else find_available_port()
@@ -837,6 +838,7 @@ class MultiShareServer:
         self.upload_enabled = upload_enabled
         self.upload_save_dir = upload_save_dir
         self.upload_password = upload_password
+        self.peer_secret = peer_secret
 
         self.sessions = {}
         self.session_lock = threading.Lock()
@@ -882,6 +884,7 @@ class MultiShareServer:
         self.httpd.upload_enabled = self.upload_enabled
         self.httpd.upload_save_dir = self.upload_save_dir
         self.httpd.upload_password = self.upload_password
+        self.httpd.peer_secret = self.peer_secret
         self.httpd.track_session = self.track_session
         self.httpd._extract_session_id_from_cookie = self._extract_session_id_from_cookie
 
@@ -956,7 +959,17 @@ class MultiShareHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        """Handle POST requests (currently only upload)."""
+        """Handle POST requests (currently only upload + peer API)."""
+        # Route peer API requests first (no session check needed)
+        if self.path.startswith("/api/peer/"):
+            try:
+                from .peer_api import handle_peer_api
+            except ImportError:
+                from peer_api import handle_peer_api
+            server_config = {"peer_secret": getattr(self.server, "peer_secret", None)}
+            handle_peer_api(self, server_config)
+            return
+
         allowed, session_id = self.server.track_session(self)
         if not allowed:
             self._send_json_error(403, "Session limit reached")
@@ -1401,6 +1414,16 @@ class UploadHandler(BaseHTTPRequestHandler):
         """Handle file upload."""
         path = self.path.split('?')[0]
 
+        # Route peer API requests first
+        if path.startswith("/api/peer/"):
+            try:
+                from .peer_api import handle_peer_api
+            except ImportError:
+                from peer_api import handle_peer_api
+            server_config = {"peer_secret": getattr(self.server, "peer_secret", None)}
+            handle_peer_api(self, server_config)
+            return
+
         if path != '/upload':
             self._send_json_error(404, 'Endpoint not found')
             return
@@ -1536,12 +1559,14 @@ class UploadServer:
         timeout_minutes: int = 30,
         max_sessions: int = 10,
         upload_password: Optional[str] = None,
+        peer_secret: Optional[str] = None,
     ):
         self.save_dir = os.path.abspath(save_dir)
         self.port = find_available_port(custom_port=port) if port else find_available_port()
         self.timeout_minutes = timeout_minutes
         self.max_sessions = max_sessions
         self.upload_password = upload_password
+        self.peer_secret = peer_secret
 
         # Session management (same pattern as MultiShareServer)
         self.sessions: dict = {}
@@ -1596,6 +1621,7 @@ class UploadServer:
         # Inject config into the server instance.
         self.httpd.save_dir = self.save_dir
         self.httpd.upload_password = self.upload_password
+        self.httpd.peer_secret = self.peer_secret
         self.httpd.sessions = self.sessions
         self.httpd.session_lock = self.session_lock
         self.httpd.max_sessions = self.max_sessions
