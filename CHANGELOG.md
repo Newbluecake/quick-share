@@ -5,6 +5,15 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-04-28
+
+### Added
+- **No timeout by default in `--serve` mode** — serve mode runs indefinitely as a background daemon instead of auto-shutting down after 5 minutes
+
+### Fixed
+- **Crash when receiving files via peer download** — save paths from the save dialog (where the target file does not exist yet) are now correctly resolved to the parent directory
+- **Missing exception handling in `_handle_peer_receive`** — `os.makedirs` failures and other unexpected errors now return proper JSON error responses instead of closing the connection
+
 ## [1.7.0] - 2026-04-28
 
 ### Added
