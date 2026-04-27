@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Starts a minimal HTTP server exposing only `/api/peer/*` endpoints
   - Enables inter-instance communication without sharing files or requiring an upload directory
   - New classes: `ServeHandler`, `ServeServer`
+- **`--secret` CLI flag** for passing peer authentication secret directly on the command line
+  - `quick-share --serve --secret KEY` starts server with secret without requiring prior config
+  - CLI `--secret` takes precedence over config file value
+- **Short commit ID in `--version` output** — `quick-share --version` now shows version with commit hash
+  - Example: `quick-share 1.6.0 (d954d40)`
+  - Fallback chain: build-time `_commit.py` → runtime `git rev-parse` → "unknown"
+- **`pyproject.toml`** for modern Python build system compatibility
 
 ## [1.5.0] - 2026-04-27
 

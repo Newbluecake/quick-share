@@ -248,7 +248,11 @@ def main() -> None:
         # Read peer config for inter-instance communication
         from .config import get_peer_config
         peer_config = get_peer_config()
-        peer_secret = peer_config["secret"] if peer_config else None
+        # CLI --secret takes precedence over config file
+        if args.secret:
+            peer_secret = args.secret
+        else:
+            peer_secret = peer_config["secret"] if peer_config else None
 
         # Determine port
         try:

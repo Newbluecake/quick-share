@@ -130,6 +130,13 @@ def parse_arguments(args=None):
         help="Start in server-only mode (peer API only, no file sharing)"
     )
 
+    parser.add_argument(
+        "--secret",
+        type=str,
+        default=None,
+        help="Shared secret key for peer authentication (overrides config file)"
+    )
+
     return parser.parse_args(args)
 
 def validate_arguments(args):
