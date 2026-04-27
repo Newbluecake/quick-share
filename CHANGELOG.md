@@ -5,6 +5,14 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-04-28
+
+### Added
+- **Auto-trigger peer file dialog on hello handshake** — when a configured peer is connected:
+  - Share mode (`quick-share <file>`) automatically triggers a save dialog on the peer side
+  - Upload mode (`quick-share --upload`) automatically triggers a file selection dialog on the peer side
+  - Both flows complete the transfer without requiring a separate peer command
+
 ## [1.6.1] - 2026-04-27
 
 ### Fixed
