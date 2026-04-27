@@ -5,6 +5,26 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-04-27
+
+### Added
+- **Peer-to-peer remote trigger** - lszrz-style bidirectional file transfer between quick-share instances
+  - `quick-share config --peer HOST:PORT --secret KEY` to configure remote peer
+  - `quick-share config --show` to view current config (with masked secret)
+  - Auto-connect to configured peer on startup with terminal status message
+  - Peer API endpoints (`/api/peer/hello`, `/api/peer/request-upload`, `/api/peer/request-download`, `/api/peer/receive`)
+  - Shared-secret authentication via `X-Peer-Secret` HTTP header
+  - Remote-triggered upload (rz-like): peer triggers file dialog on this instance, files sent back to peer
+  - Remote-triggered download (sz-like): peer sends file list, this instance picks save path
+- Cross-platform native file dialogs (`src/file_dialog.py`)
+  - Linux: zenity (GNOME/XFCE) and kdialog (KDE)
+  - macOS: osascript / AppleScript dialogs
+  - Windows: PowerShell file/folder browser dialogs
+  - Graceful fallback to terminal path input when no GUI available
+- Peer HTTP client (`src/peer_client.py`) for inter-instance communication
+- Configuration file management (`src/config.py`) at `~/.quick-share/config.json`
+- Peer event logging with dedicated emoji indicators (✓ ⚠ ↗ ↘ ✗)
+
 ## [1.4.0] - 2026-04-27
 
 ### Added
@@ -76,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed directory ZIP download progress tracking by calculating size inline
 
+[1.5.0]: https://github.com/Newbluecake/quick-share/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Newbluecake/quick-share/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.2.0
