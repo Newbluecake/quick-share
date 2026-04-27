@@ -239,6 +239,11 @@ def main() -> None:
     Accepts one or more file/directory paths and serves them via
     MultiShareServer, which always presents a unified file-list page.
     """
+    # Reset global state (important for tests that call main() multiple times)
+    global _shutdown_in_progress, _active_server
+    _shutdown_in_progress = False
+    _active_server = None
+
     # Register SIGINT handler for graceful/force shutdown
     signal.signal(signal.SIGINT, _sigint_handler)
 
@@ -448,7 +453,6 @@ def main() -> None:
             print(msg)
 
         # Start server
-        global _active_server
         _active_server = server
         try:
             server.start()
@@ -524,7 +528,6 @@ def main() -> None:
                 server.server_thread.join(timeout=0.5)
         except KeyboardInterrupt:
             # Safety net for direct KeyboardInterrupt (e.g. in tests)
-            global _shutdown_in_progress
             if not _shutdown_in_progress:
                 _shutdown_in_progress = True
                 print("\nStopping server...")
