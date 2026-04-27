@@ -322,6 +322,101 @@ class DirectoryShareHandler(BaseHTTPRequestHandler):
         else:
             self._serve_directory_listing(directory_path, real_path)
 
+    def do_POST(self):
+        """Handle POST requests (upload)."""
+        if hasattr(self.server, 'sessions'):
+            allowed, session_id = self.server.track_session(self)
+            if not allowed:
+                self.send_error(403, "Session limit reached")
+                return
+            self.session_id = session_id
+
+        path = self.path.split("?")[0]
+        if path not in ("/upload", "/api/upload"):
+            self.send_error(404, "Not found")
+            return
+
+        pw = getattr(self.server, "upload_password", None)
+        if pw is not None:
+            if self.headers.get("X-Upload-Password", "") != pw:
+                self._send_json_error(403, "Invalid upload password")
+                return
+
+        try:
+            from .upload_handler import (
+                parse_multipart_request, save_uploaded_file,
+                UploadProgressTracker,
+            )
+            from .logger import (
+                format_upload_start, format_upload_complete,
+                format_upload_error, get_timestamp,
+            )
+        except ImportError:
+            from upload_handler import (
+                parse_multipart_request, save_uploaded_file,
+                UploadProgressTracker,
+            )
+            from logger import (
+                format_upload_start, format_upload_complete,
+                format_upload_error, get_timestamp,
+            )
+
+        content_type = self.headers.get("Content-Type", "")
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+
+        try:
+            files, form_fields = parse_multipart_request(
+                content_type, content_length, self.rfile,
+                include_form_fields=True,
+            )
+        except ValueError as exc:
+            self._send_json_error(400, str(exc))
+            return
+
+        if pw is not None and not self.headers.get("X-Upload-Password"):
+            if form_fields.get("password", "") != pw:
+                self._send_json_error(403, "Invalid upload password")
+                return
+
+        if not files:
+            self._send_json_error(400, "No files uploaded")
+            return
+
+        save_dir = getattr(self.server, "upload_save_dir", None) or \
+            self.server.directory_path
+        client_ip = self.client_address[0]
+        saved_paths = []
+        for uf in files:
+            try:
+                from .directory_handler import format_file_size as fmt_size
+            except ImportError:
+                from directory_handler import format_file_size as fmt_size
+
+            ts = get_timestamp()
+            print(format_upload_start(ts, client_ip, uf.filename,
+                                       fmt_size(uf.size)))
+            try:
+                saved_paths.append(save_uploaded_file(uf, save_dir))
+                ts2 = get_timestamp()
+                print(format_upload_complete(ts2, client_ip, uf.filename,
+                                              uf.size, 0))
+            except (ValueError, OSError) as exc:
+                ts2 = get_timestamp()
+                print(format_upload_error(ts2, client_ip, uf.filename,
+                                           str(exc)))
+                self._send_json_error(500, str(exc))
+                return
+
+        filenames = [os.path.basename(p) for p in saved_paths]
+        primary = filenames[0] if len(filenames) == 1 else f"{len(filenames)} files"
+        self._send_json_response({
+            "status": "ok",
+            "filename": primary,
+            "files": filenames,
+            "count": len(filenames),
+            "saved_to": save_dir,
+        })
+
     def _handle_api_request(self):
         """Handle JSON API requests."""
         from urllib.parse import urlparse, parse_qs
@@ -730,12 +825,18 @@ class MultiShareServer:
         timeout_minutes=30,
         max_sessions=10,
         legacy_mode=False,
+        upload_enabled=False,
+        upload_save_dir=None,
+        upload_password=None,
     ):
         self.paths = paths
         self.port = find_available_port(custom_port=port) if port else find_available_port()
         self.timeout_minutes = timeout_minutes
         self.max_sessions = max_sessions
         self.legacy_mode = legacy_mode
+        self.upload_enabled = upload_enabled
+        self.upload_save_dir = upload_save_dir
+        self.upload_password = upload_password
 
         self.sessions = {}
         self.session_lock = threading.Lock()
@@ -778,6 +879,9 @@ class MultiShareServer:
         self.httpd.session_lock = self.session_lock
         self.httpd.max_sessions = self.max_sessions
         self.httpd.legacy_mode = self.legacy_mode
+        self.httpd.upload_enabled = self.upload_enabled
+        self.httpd.upload_save_dir = self.upload_save_dir
+        self.httpd.upload_password = self.upload_password
         self.httpd.track_session = self.track_session
         self.httpd._extract_session_id_from_cookie = self._extract_session_id_from_cookie
 
@@ -820,8 +924,156 @@ class MultiShareHandler(BaseHTTPRequestHandler):
             self._serve_file_download()
         elif path.startswith("/download/all.zip"):
             self._serve_all_as_zip()
+        elif path.startswith("/upload"):
+            self._serve_upload_page()
         else:
             self.send_error(404, "Not found")
+
+    # -- Upload support (integrated mode) ------------------------------
+
+    def _serve_upload_page(self):
+        """Serve the upload page HTML (integrated mode, via template)."""
+        upload_enabled = getattr(self.server, "upload_enabled", False)
+        if not upload_enabled:
+            self.send_error(404, "Not found")
+            return
+
+        password_set = (
+            getattr(self.server, "upload_password", None) is not None
+        )
+        try:
+            from .templates import generate_upload_page
+        except ImportError:
+            from templates import generate_upload_page
+
+        html = generate_upload_page(password_set)
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self._set_session_cookie_if_needed()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        """Handle POST requests (currently only upload)."""
+        allowed, session_id = self.server.track_session(self)
+        if not allowed:
+            self._send_json_error(403, "Session limit reached")
+            return
+        self.session_id = session_id
+
+        upload_enabled = getattr(self.server, "upload_enabled", False)
+        if not upload_enabled:
+            self._send_json_error(404, "Not found")
+            return
+
+        path = self.path.split("?")[0]
+
+        # Support both /upload and /api/upload
+        if path not in ("/upload", "/api/upload"):
+            self._send_json_error(404, "Endpoint not found")
+            return
+
+        # Parse multipart request (include form fields for password check)
+        try:
+            from .upload_handler import (
+                parse_multipart_request,
+                save_uploaded_file,
+                UploadProgressTracker,
+            )
+        except ImportError:
+            from upload_handler import (
+                parse_multipart_request,
+                save_uploaded_file,
+                UploadProgressTracker,
+            )
+
+        content_type = self.headers.get("Content-Type", "")
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+
+        try:
+            uploaded_files, form_fields = parse_multipart_request(
+                content_type, content_length, self.rfile,
+                include_form_fields=True,
+            )
+        except ValueError as exc:
+            self._send_json_error(400, str(exc))
+            return
+        except Exception as exc:
+            self._send_json_error(500, f"Failed to parse upload: {exc}")
+            return
+
+        if not uploaded_files:
+            self._send_json_error(400, "No files found in upload request")
+            return
+
+        # Password check (header first, then multipart form field)
+        pw = getattr(self.server, "upload_password", None)
+        if pw is not None:
+            header_pw = self.headers.get("X-Upload-Password", "")
+            if header_pw != pw:
+                form_pw = form_fields.get("password", "")
+                if form_pw != pw:
+                    self._send_json_error(403, "Invalid upload password")
+                    return
+
+        save_dir = getattr(self.server, "upload_save_dir", os.getcwd())
+
+        saved_paths = []
+        for uf in uploaded_files:
+            try:
+                from .logger import (
+                    format_upload_start,
+                    format_upload_complete,
+                    get_timestamp,
+                )
+            except ImportError:
+                from logger import (
+                    format_upload_start,
+                    format_upload_complete,
+                    get_timestamp,
+                )
+
+            client_ip = self.client_address[0]
+            ts = get_timestamp()
+
+            try:
+                from .directory_handler import format_file_size as fmt_size
+            except ImportError:
+                from directory_handler import format_file_size as fmt_size
+            size_str = fmt_size(uf.size)
+
+            print(format_upload_start(ts, client_ip, uf.filename, size_str))
+
+            tracker = UploadProgressTracker(client_ip, uf.filename, uf.size)
+
+            try:
+                final_path = save_uploaded_file(uf, save_dir, tracker=tracker)
+                saved_paths.append(final_path)
+
+                duration = time.time() - tracker.start_time
+                ts = get_timestamp()
+                print(format_upload_complete(ts, client_ip, uf.filename, uf.size, duration))
+            except (ValueError, OSError) as exc:
+                try:
+                    from .logger import format_upload_error
+                except ImportError:
+                    from logger import format_upload_error
+                ts = get_timestamp()
+                print(format_upload_error(ts, client_ip, uf.filename, str(exc)))
+                self._send_json_error(500, str(exc))
+                return
+
+        filenames = [os.path.basename(p) for p in saved_paths]
+        primary = filenames[0] if len(filenames) == 1 else f"{len(filenames)} files"
+        self._send_json_response({
+            "status": "ok",
+            "filename": primary,
+            "files": filenames,
+            "count": len(filenames),
+            "saved_to": save_dir,
+        })
 
     def _serve_root_page(self):
         use_legacy = (
@@ -1037,3 +1289,336 @@ class MultiShareHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass
+
+
+# ======================================================================
+# Upload Server (standalone mode)
+# ======================================================================
+
+class UploadHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for the standalone upload server."""
+
+    # Suppress default HTTP log messages.
+    def log_message(self, format, *args):
+        pass
+
+    # -- Helpers -------------------------------------------------------
+
+    def _get_upload_page_html(self) -> str:
+        """Return the upload page HTML via the template module."""
+        password_set = (
+            hasattr(self.server, 'upload_password')
+            and self.server.upload_password is not None
+        )
+        try:
+            from .templates import generate_upload_page
+        except ImportError:
+            from templates import generate_upload_page
+        return generate_upload_page(password_set)
+
+    def _render_upload_page(self):
+        """Send the upload page HTML."""
+        html = self._get_upload_page_html()
+        body = html.encode('utf-8')
+        self.send_response(200)
+        # Session cookie may be set by _track_session in do_GET
+        if hasattr(self, "session_id") and self.session_id:
+            self.send_header(
+                "Set-Cookie",
+                f"quick_share_session={self.session_id}; Path=/; HttpOnly",
+            )
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json_response(self, data: dict, status: int = 200):
+        body = json.dumps(data).encode('utf-8')
+        self.send_response(status)
+        self._set_session_cookie_if_needed()
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json_error(self, status: int, message: str):
+        self._send_json_response({'error': message, 'status': status}, status)
+
+    def _set_session_cookie_if_needed(self):
+        if hasattr(self, "session_id") and self.session_id:
+            self.send_header(
+                "Set-Cookie",
+                f"quick_share_session={self.session_id}; Path=/; HttpOnly",
+            )
+
+    # -- Session tracking (reuse pattern from DirectoryShareServer) ----
+
+    def _track_session(self) -> bool:
+        """Return True if the session is allowed under the current quota."""
+        if hasattr(self.server, 'track_session'):
+            allowed, session_id = self.server.track_session(self)
+            self.session_id = session_id
+            return allowed
+        return True
+
+    # -- Password check ------------------------------------------------
+
+    @staticmethod
+    def _check_upload_password(handler, form_fields: dict) -> bool:
+        """Return True if the request passes the upload password check.
+
+        Checks:
+          1. ``X-Upload-Password`` header (fast path)
+          2. ``password`` multipart form field (fallback)
+        """
+        server_pw = getattr(handler.server, 'upload_password', None)
+        if server_pw is None:
+            return True  # No password configured
+        header_pw = handler.headers.get('X-Upload-Password', '')
+        if header_pw == server_pw:
+            return True
+        form_pw = form_fields.get('password', '')
+        return form_pw == server_pw
+
+    # -- GET -----------------------------------------------------------
+
+    def do_GET(self):
+        """Serve the upload page."""
+        path = self.path.split('?')[0]
+
+        if path == '/upload' or path == '/':
+            # Check session quota
+            if not self._track_session():
+                self.send_error(403, 'Session limit reached')
+                return
+            self._render_upload_page()
+        else:
+            self.send_error(404, 'Not found')
+
+    # -- POST ----------------------------------------------------------
+
+    def do_POST(self):
+        """Handle file upload."""
+        path = self.path.split('?')[0]
+
+        if path != '/upload':
+            self._send_json_error(404, 'Endpoint not found')
+            return
+
+        # Session quota check
+        if not self._track_session():
+            self._send_json_error(403, 'Session limit reached')
+            return
+
+        # Parse the multipart upload (include form fields for password check)
+        try:
+            from .upload_handler import (
+                parse_multipart_request,
+                save_uploaded_file,
+                UploadProgressTracker,
+            )
+        except ImportError:
+            from upload_handler import (
+                parse_multipart_request,
+                save_uploaded_file,
+                UploadProgressTracker,
+            )
+
+        content_type = self.headers.get('Content-Type', '')
+        content_length = int(self.headers.get('Content-Length', '0') or '0')
+
+        try:
+            uploaded_files, form_fields = parse_multipart_request(
+                content_type, content_length, self.rfile,
+                include_form_fields=True,
+            )
+        except ValueError as exc:
+            self._send_json_error(400, str(exc))
+            return
+        except Exception as exc:
+            self._send_json_error(500, f'Failed to parse upload: {exc}')
+            return
+
+        if not uploaded_files:
+            self._send_json_error(400, 'No files found in upload request')
+            return
+
+        # Password check (header first, then multipart form field)
+        if not self._check_upload_password(self, form_fields):
+            self._send_json_error(403, 'Invalid upload password')
+            return
+
+        save_dir = getattr(self.server, 'save_dir', os.getcwd())
+
+        # Save each file
+        saved_paths = []
+        for uf in uploaded_files:
+            # Reject password field sent as a file (defensive)
+            if uf.filename == 'password' or uf.field_name == 'password':
+                continue
+
+            try:
+                from .logger import (
+                    format_upload_start,
+                    format_upload_complete,
+                    get_timestamp,
+                )
+            except ImportError:
+                from logger import (
+                    format_upload_start,
+                    format_upload_complete,
+                    get_timestamp,
+                )
+
+            client_ip = self.client_address[0]
+            ts = get_timestamp()
+
+            # Determine file size for logging
+            file_size_str = f"{len(uf.data)} bytes"
+            try:
+                from .directory_handler import format_file_size as fmt_size
+            except ImportError:
+                from directory_handler import format_file_size as fmt_size
+            file_size_str = fmt_size(uf.size)
+
+            print(format_upload_start(ts, client_ip, uf.filename, file_size_str))
+
+            tracker = UploadProgressTracker(client_ip, uf.filename, uf.size)
+
+            try:
+                final_path = save_uploaded_file(uf, save_dir, tracker=tracker)
+                saved_paths.append(final_path)
+
+                duration = time.time() - tracker.start_time
+                ts = get_timestamp()
+                print(format_upload_complete(ts, client_ip, uf.filename, uf.size, duration))
+            except (ValueError, OSError) as exc:
+                from .logger import format_upload_error
+                try:
+                    from logger import format_upload_error
+                except ImportError:
+                    pass
+                ts = get_timestamp()
+                print(format_upload_error(ts, client_ip, uf.filename, str(exc)))
+                self._send_json_error(500, str(exc))
+                return
+
+        filenames = [os.path.basename(p) for p in saved_paths]
+        primary = filenames[0] if len(filenames) == 1 else f"{len(filenames)} files"
+        self._send_json_response({
+            'status': 'ok',
+            'filename': primary,
+            'files': filenames,
+            'count': len(filenames),
+            'saved_to': save_dir,
+        })
+
+
+class UploadServer:
+    """Standalone HTTP server for receiving file uploads.
+
+    Usage::
+
+        server = UploadServer(
+            save_dir="/tmp/uploads",
+            port=8080,
+            timeout_minutes=30,
+            max_sessions=10,
+            upload_password=None,
+        )
+        server.start()
+    """
+
+    def __init__(
+        self,
+        save_dir: str,
+        port: Optional[int] = None,
+        timeout_minutes: int = 30,
+        max_sessions: int = 10,
+        upload_password: Optional[str] = None,
+    ):
+        self.save_dir = os.path.abspath(save_dir)
+        self.port = find_available_port(custom_port=port) if port else find_available_port()
+        self.timeout_minutes = timeout_minutes
+        self.max_sessions = max_sessions
+        self.upload_password = upload_password
+
+        # Session management (same pattern as MultiShareServer)
+        self.sessions: dict = {}
+        self.session_lock = threading.Lock()
+
+        self.httpd: Optional[HTTPServer] = None
+        self.server_thread: Optional[threading.Thread] = None
+        self.shutdown_timer: Optional[threading.Timer] = None
+
+    def track_session(self, request_handler) -> Tuple[bool, Optional[str]]:
+        """Track a client session and enforce the session limit.
+
+        Returns ``(allowed, session_id)``.
+        """
+        import uuid
+        import time as _time
+
+        with self.session_lock:
+            cookie = request_handler.headers.get('Cookie', '')
+            session_id = self._extract_session_id(cookie)
+
+            if session_id and session_id in self.sessions:
+                return True, session_id
+
+            if len(self.sessions) >= self.max_sessions:
+                return False, None
+
+            if not session_id:
+                session_id = str(uuid.uuid4())
+
+            self.sessions[session_id] = {
+                'ip': request_handler.client_address[0],
+                'created_at': _time.time(),
+                'user_agent': request_handler.headers.get('User-Agent', 'Unknown'),
+            }
+            return True, session_id
+
+    @staticmethod
+    def _extract_session_id(cookie_header: str) -> Optional[str]:
+        if not cookie_header:
+            return None
+        for part in cookie_header.split(';'):
+            part = part.strip()
+            if part.startswith('quick_share_session='):
+                return part.split('=', 1)[1]
+        return None
+
+    def start(self):
+        """Start the server in a background thread."""
+        self.httpd = ThreadingHTTPServer(('', self.port), UploadHandler)
+
+        # Inject config into the server instance.
+        self.httpd.save_dir = self.save_dir
+        self.httpd.upload_password = self.upload_password
+        self.httpd.sessions = self.sessions
+        self.httpd.session_lock = self.session_lock
+        self.httpd.max_sessions = self.max_sessions
+        self.httpd.track_session = self.track_session
+        self.httpd._extract_session_id = self._extract_session_id
+
+        self.server_thread = threading.Thread(target=self.httpd.serve_forever)
+        self.server_thread.daemon = True
+        self.server_thread.start()
+
+        self.shutdown_timer = threading.Timer(
+            self.timeout_minutes * 60, self._shutdown_server,
+        )
+        self.shutdown_timer.start()
+
+    def stop(self):
+        """Stop the server."""
+        self._shutdown_server()
+
+    def _shutdown_server(self):
+        """Internal shutdown logic."""
+        if self.shutdown_timer:
+            self.shutdown_timer.cancel()
+        if self.httpd:
+            self.httpd.shutdown()
+            self.httpd.server_close()

@@ -324,7 +324,7 @@ def test_main_no_args():
     with patch('sys.argv', ['quick-share']):
         with pytest.raises(SystemExit) as e:
             main()
-        assert e.value.code == 2
+        assert e.value.code == 1
 
 def test_main_invalid_argument():
     # Test invalid port argument causing validate_arguments to fail

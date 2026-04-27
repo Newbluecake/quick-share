@@ -199,6 +199,20 @@ def generate_spa_html(base_dir_name: str) -> str:
             border-radius: 4px;
             margin-bottom: 20px;
         }}
+        .upload-panel {{
+            border-top: 1px solid var(--border-color);
+            padding: 20px 0; margin-top: 20px;
+        }}
+        .upload-dropzone {{
+            border: 2px dashed #ccc; border-radius: 6px; padding: 24px;
+            text-align: center; cursor: pointer; transition: border-color 0.2s;
+            margin: 8px 0;
+        }}
+        .upload-dropzone:hover, .upload-dropzone.dragover {{ border-color: var(--primary-color); background: #f0f7ff; }}
+        .upload-progress {{ width: 100%; margin: 8px 0; }}
+        .upload-status {{ font-size: 0.85rem; margin-top: 4px; }}
+        .upload-status.success {{ color: #28a745; }}
+        .upload-status.error {{ color: #dc3545; }}
     </style>
 </head>
 <body>
@@ -209,6 +223,7 @@ def generate_spa_html(base_dir_name: str) -> str:
                 <span style="color: #888; font-weight: normal;">/ {html.escape(base_dir_name)}</span>
             </div>
             <div class="actions">
+                <button class="btn" @click="toggleUpload">{{{{ showUpload ? 'Close Upload' : 'Upload' }}}}</button>
                 <a href="/?legacy=1" class="btn">Legacy View</a>
                 <a href="/?download=zip" class="btn">Download ZIP</a>
             </div>
@@ -256,6 +271,30 @@ def generate_spa_html(base_dir_name: str) -> str:
                     <div style="font-size: 4rem; margin-bottom: 20px;">📄</div>
                     <h3>Select a file to preview</h3>
                     <p>Supported formats: Text, Code, Markdown</p>
+                </div>
+
+                <!-- Upload Section -->
+                <div v-if="showUpload" class="upload-panel">
+                    <h3 style="margin-bottom: 12px;">Upload Files</h3>
+                    <div v-if="uploadPasswordRequired" style="margin-bottom:12px;">
+                        <label style="display:block;margin-bottom:4px;font-size:0.85rem;color:#555;">Upload Password</label>
+                        <input type="password" v-model="uploadPassword" placeholder="Enter upload password"
+                               style="width:100%;max-width:300px;padding:10px 12px;border:1px solid #ccc;border-radius:6px;font-size:0.95rem;" />
+                    </div>
+                    <div :class="isDragging ? 'upload-dropzone dragover' : 'upload-dropzone'"
+                         @click="triggerFileInput"
+                         @dragover.prevent="onDragOver" @dragleave.prevent="onDragLeave"
+                         @drop.prevent="onDrop">
+                        <p v-if="!uploadSelectedFile">Drag &amp; drop a file here or click to select</p>
+                        <p v-else>{{{{ uploadSelectedFile.name }}}} ({{{{ formatSize(uploadSelectedFile.size) }}}})</p>
+                    </div>
+                    <input type="file" ref="uploadFileInput" @change="onUploadFileSelected" style="display:none" />
+                    <progress class="upload-progress" :value="uploadProgress" max="100" v-if="uploading"></progress>
+                    <div :class="['upload-status', uploadStatusClass]" v-if="uploadMessage">{{{{ uploadMessage }}}}</div>
+                    <button class="btn btn-primary" @click="startUpload" :disabled="!uploadSelectedFile || uploading"
+                            style="margin-top: 8px;">
+                        {{{{ uploading ? 'Uploading...' : 'Upload' }}}}
+                    </button>
                 </div>
             </main>
         </div>
@@ -416,6 +455,92 @@ def generate_spa_html(base_dir_name: str) -> str:
                     }}
                 }}
 
+                // Upload state
+                const showUpload = ref(false);
+                const isDragging = ref(false);
+                const uploadSelectedFile = ref(null);
+                const uploading = ref(false);
+                const uploadProgress = ref(0);
+                const uploadMessage = ref('');
+                const uploadStatusClass = ref('');
+                const uploadPassword = ref('');
+                const uploadPasswordRequired = window.location.search.includes('upload_password=1');
+                const uploadFileInput = ref(null);
+
+                function toggleUpload() {{
+                    showUpload.value = !showUpload.value;
+                    if (!showUpload.value) {{
+                        uploadSelectedFile.value = null;
+                        uploadMessage.value = '';
+                    }}
+                }}
+
+                function triggerFileInput() {{
+                    uploadFileInput.value.click();
+                }}
+
+                function onDragOver() {{ isDragging.value = true; }}
+                function onDragLeave() {{ isDragging.value = false; }}
+
+                function onDrop(e) {{
+                    isDragging.value = false;
+                    if (e.dataTransfer.files.length > 0) {{
+                        uploadSelectedFile.value = e.dataTransfer.files[0];
+                    }}
+                }}
+
+                function onUploadFileSelected(e) {{
+                    if (e.target.files.length > 0) {{
+                        uploadSelectedFile.value = e.target.files[0];
+                    }}
+                }}
+
+                async function startUpload() {{
+                    if (!uploadSelectedFile.value || uploading.value) return;
+                    uploading.value = true;
+                    uploadProgress.value = 0;
+                    uploadMessage.value = '';
+                    uploadStatusClass.value = '';
+
+                    const formData = new FormData();
+                    formData.append('file', uploadSelectedFile.value);
+                    if (uploadPasswordRequired && uploadPassword.value) {{
+                        formData.append('password', uploadPassword.value);
+                    }}
+
+                    try {{
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/api/upload', true);
+                        xhr.upload.onprogress = (e) => {{
+                            if (e.lengthComputable) {{
+                                uploadProgress.value = (e.loaded / e.total) * 100;
+                            }}
+                        }};
+                        const result = await new Promise((resolve, reject) => {{
+                            xhr.onload = () => {{
+                                if (xhr.status >= 200 && xhr.status < 300) {{
+                                    resolve(JSON.parse(xhr.responseText));
+                                }} else {{
+                                    let msg = 'Upload failed';
+                                    try {{ const r = JSON.parse(xhr.responseText); msg = r.error || msg; }} catch(e) {{}}
+                                    reject(new Error(msg));
+                                }}
+                            }};
+                            xhr.onerror = () => reject(new Error('Network error'));
+                            xhr.send(formData);
+                        }});
+                        uploadMessage.value = 'Uploaded: ' + result.filename;
+                        uploadStatusClass.value = 'success';
+                        uploadProgress.value = 100;
+                        uploadSelectedFile.value = null;
+                    }} catch (e) {{
+                        uploadMessage.value = e.message;
+                        uploadStatusClass.value = 'error';
+                    }} finally {{
+                        uploading.value = false;
+                    }}
+                }}
+
                 onMounted(() => {{
                     loadRoot();
                 }});
@@ -438,7 +563,14 @@ def generate_spa_html(base_dir_name: str) -> str:
                     languageClass,
                     renderedMarkdown,
                     formatSize,
-                    selectItem
+                    selectItem,
+                    showUpload, toggleUpload, isDragging,
+                    uploadSelectedFile, uploading, uploadProgress,
+                    uploadMessage, uploadStatusClass,
+                    uploadPassword, uploadPasswordRequired,
+                    uploadFileInput, triggerFileInput,
+                    onDragOver, onDragLeave, onDrop,
+                    onUploadFileSelected, startUpload,
                 }};
             }}
         }}).mount('#app');
@@ -532,6 +664,21 @@ def generate_multi_share_spa_html(item_count: int) -> str:
             border-radius: 4px; margin-bottom: 16px;
         }}
         .empty {{ color: #aaa; text-align: center; padding: 40px; }}
+        .upload-section {{
+            background: var(--white); border-radius: 6px; border: 1px solid var(--border);
+            padding: 20px; margin-top: 16px;
+        }}
+        .upload-section.hidden {{ display: none; }}
+        .upload-dropzone {{
+            border: 2px dashed #ccc; border-radius: 6px; padding: 24px;
+            text-align: center; cursor: pointer; transition: border-color 0.2s;
+        }}
+        .upload-dropzone:hover, .upload-dropzone.dragover {{ border-color: var(--primary); background: #f0f7ff; }}
+        .upload-btn-small {{ margin-left: 8px; }}
+        .upload-progress {{ width: 100%; margin: 8px 0; }}
+        .upload-status {{ font-size: 0.85rem; margin-top: 4px; }}
+        .upload-status.success {{ color: #28a745; }}
+        .upload-status.error {{ color: #dc3545; }}
     </style>
 </head>
 <body>
@@ -541,7 +688,11 @@ def generate_multi_share_spa_html(item_count: int) -> str:
                 <span>Quick Share</span>
                 <span class="sub">/ {title_text}</span>
             </div>
-            <a href="/download/all.zip" class="btn btn-primary">Download All (ZIP)</a>
+            <div>
+                <button class="btn" @click="toggleUpload" v-if="!showUpload">Upload</button>
+                <button class="btn" @click="toggleUpload" v-else>Close Upload</button>
+                <a href="/download/all.zip" class="btn btn-primary" style="margin-left:8px;">Download All (ZIP)</a>
+            </div>
         </header>
         <div class="main">
             <div v-if="error" class="error-banner">{{{{ error }}}}</div>
@@ -554,6 +705,30 @@ def generate_multi_share_spa_html(item_count: int) -> str:
                     :item="item"
                     :virtual-path="'/' + item.name"
                 ></file-item>
+            </div>
+
+            <!-- Upload Section -->
+            <div :class="showUpload ? 'upload-section' : 'upload-section hidden'">
+                <h3 style="margin-bottom: 12px;">Upload Files</h3>
+                <div v-if="uploadPasswordRequired" class="field" style="margin-bottom:12px;">
+                    <label style="display:block;margin-bottom:4px;font-size:0.85rem;color:#555;">Upload Password</label>
+                    <input type="password" v-model="uploadPassword" placeholder="Enter upload password"
+                           style="width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:6px;font-size:0.95rem;" />
+                </div>
+                <div :class="isDragging ? 'upload-dropzone dragover' : 'upload-dropzone'"
+                     @click="triggerFileInput"
+                     @dragover.prevent="onDragOver" @dragleave.prevent="onDragLeave"
+                     @drop.prevent="onDrop">
+                    <p v-if="!selectedFile">Drag &amp; drop files here or click to select</p>
+                    <p v-else>{{{{ selectedFile.name }}}} ({{{{ formatSize(selectedFile.size) }}}})</p>
+                </div>
+                <input type="file" ref="fileInput" @change="onFileSelected" style="display:none" />
+                <progress class="upload-progress" :value="uploadProgress" max="100" v-if="uploading"></progress>
+                <div :class="['upload-status', uploadStatusClass]" v-if="uploadMessage">{{{{ uploadMessage }}}}</div>
+                <button class="btn btn-primary" @click="startUpload" :disabled="!selectedFile || uploading"
+                        style="margin-top: 8px;">
+                    {{{{ uploading ? 'Uploading...' : 'Upload' }}}}
+                </button>
             </div>
         </div>
     </div>
@@ -636,6 +811,110 @@ def generate_multi_share_spa_html(item_count: int) -> str:
                 const loading = ref(false);
                 const error = ref(null);
 
+                // Upload state
+                const showUpload = ref(false);
+                const isDragging = ref(false);
+                const selectedFile = ref(null);
+                const uploading = ref(false);
+                const uploadProgress = ref(0);
+                const uploadMessage = ref('');
+                const uploadStatusClass = ref('');
+                const uploadPassword = ref('');
+                const uploadPasswordRequired = window.location.search.includes('upload_password=1');
+                const fileInput = ref(null);
+
+                function toggleUpload() {{
+                    showUpload.value = !showUpload.value;
+                    if (!showUpload.value) {{
+                        selectedFile.value = null;
+                        uploadMessage.value = '';
+                    }}
+                }}
+
+                function triggerFileInput() {{
+                    fileInput.value.click();
+                }}
+
+                function onDragOver() {{
+                    isDragging.value = true;
+                }}
+
+                function onDragLeave() {{
+                    isDragging.value = false;
+                }}
+
+                function onDrop(e) {{
+                    isDragging.value = false;
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {{
+                        selectedFile.value = files[0];
+                    }}
+                }}
+
+                function onFileSelected(e) {{
+                    const files = e.target.files;
+                    if (files.length > 0) {{
+                        selectedFile.value = files[0];
+                    }}
+                }}
+
+                function formatSize(bytes) {{
+                    if (!bytes) return '0 B';
+                    const k = 1024, sizes = ['B','KB','MB','GB','TB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+                }}
+
+                async function startUpload() {{
+                    if (!selectedFile.value || uploading.value) return;
+
+                    uploading.value = true;
+                    uploadProgress.value = 0;
+                    uploadMessage.value = '';
+                    uploadStatusClass.value = '';
+
+                    const formData = new FormData();
+                    formData.append('file', selectedFile.value);
+                    if (uploadPasswordRequired && uploadPassword.value) {{
+                        formData.append('password', uploadPassword.value);
+                    }}
+
+                    try {{
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/api/upload', true);
+
+                        xhr.upload.onprogress = (e) => {{
+                            if (e.lengthComputable) {{
+                                uploadProgress.value = (e.loaded / e.total) * 100;
+                            }}
+                        }};
+
+                        const result = await new Promise((resolve, reject) => {{
+                            xhr.onload = () => {{
+                                if (xhr.status >= 200 && xhr.status < 300) {{
+                                    resolve(JSON.parse(xhr.responseText));
+                                }} else {{
+                                    let msg = 'Upload failed';
+                                    try {{ const r = JSON.parse(xhr.responseText); msg = r.error || msg; }} catch(e) {{}}
+                                    reject(new Error(msg));
+                                }}
+                            }};
+                            xhr.onerror = () => reject(new Error('Network error'));
+                            xhr.send(formData);
+                        }});
+
+                        uploadMessage.value = 'Uploaded: ' + result.filename;
+                        uploadStatusClass.value = 'success';
+                        uploadProgress.value = 100;
+                        selectedFile.value = null;
+                    }} catch (e) {{
+                        uploadMessage.value = e.message;
+                        uploadStatusClass.value = 'error';
+                    }} finally {{
+                        uploading.value = false;
+                    }}
+                }}
+
                 async function loadRoot() {{
                     loading.value = true;
                     try {{
@@ -651,7 +930,15 @@ def generate_multi_share_spa_html(item_count: int) -> str:
                 }}
 
                 onMounted(loadRoot);
-                return {{ items, loading, error }};
+                return {{
+                    items, loading, error,
+                    showUpload, toggleUpload, isDragging,
+                    selectedFile, uploading, uploadProgress,
+                    uploadMessage, uploadStatusClass,
+                    uploadPassword, uploadPasswordRequired, fileInput,
+                    triggerFileInput, onDragOver, onDragLeave,
+                    onDrop, onFileSelected, formatSize, startUpload,
+                }};
             }}
         }}).mount('#app');
     </script>
@@ -736,6 +1023,182 @@ def generate_multi_share_legacy_html(
             </tbody>
         </table>
     </div>
+</body>
+</html>
+"""
+
+
+def generate_upload_page(upload_password_set: bool = False) -> str:
+    """Generate pure HTML5 upload page for standalone upload mode.
+
+    Args:
+        upload_password_set: If True, include a password input field.
+
+    Returns:
+        Full HTML page string with drag-drop, file selection, progress bar.
+    """
+    password_section = ""
+    if upload_password_set:
+        password_section = """
+                <div class="field">
+                    <label for="password">Upload Password</label>
+                    <input type="password" id="password" placeholder="Enter upload password" />
+                </div>
+            """
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick Share - Upload</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5; color: #333; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+        }}
+        .container {{
+            max-width: 520px; width: 100%; margin: 20px;
+            background: #fff; border-radius: 8px; padding: 32px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        }}
+        h1 {{ font-size: 1.5rem; margin-bottom: 8px; }}
+        .subtitle {{ color: #888; font-size: 0.9rem; margin-bottom: 24px; }}
+        #dropzone {{
+            border: 2px dashed #ccc; border-radius: 8px; padding: 40px 20px;
+            text-align: center; cursor: pointer; transition: border-color 0.2s;
+            margin-bottom: 16px;
+        }}
+        #dropzone:hover, #dropzone.dragover {{ border-color: #007bff; background: #f0f7ff; }}
+        #dropzone.has-file {{ border-color: #28a745; }}
+        #fileInfo {{ color: #666; font-size: 0.85rem; margin-top: 8px; }}
+        .btn-primary {{
+            display: block; width: 100%; padding: 12px;
+            background: #007bff; color: #fff; border: none; border-radius: 6px;
+            font-size: 1rem; cursor: pointer;
+        }}
+        .btn-primary:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+        #progress {{ width: 100%; margin: 12px 0; display: none; }}
+        #status {{ margin: 12px 0; font-size: 0.9rem; }}
+        .status-success {{ color: #28a745; }}
+        .status-error {{ color: #dc3545; }}
+        .field {{ margin-bottom: 16px; }}
+        .field label {{ display: block; margin-bottom: 4px; font-size: 0.85rem; color: #555; }}
+        .field input[type="password"] {{
+            width: 100%; padding: 10px 12px; border: 1px solid #ccc;
+            border-radius: 6px; font-size: 0.95rem;
+        }}
+        input[type="file"] {{ display: none; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Upload Files</h1>
+        <p class="subtitle">Select or drag files to upload</p>
+
+        {password_section}
+
+        <div id="dropzone" onclick="document.getElementById('fileInput').click()">
+            <p style="font-size: 2rem; margin-bottom: 8px;">+</p>
+            <p>Drag &amp; drop files here</p>
+            <p style="font-size:0.85rem;color:#888;">or click to select</p>
+            <div id="fileInfo"></div>
+        </div>
+
+        <input type="file" id="fileInput" multiple />
+
+        <progress id="progress" value="0" max="100"></progress>
+        <div id="status"></div>
+
+        <button class="btn-primary" id="uploadBtn" disabled>Upload</button>
+    </div>
+
+    <script>
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const progress = document.getElementById('progress');
+        const status = document.getElementById('status');
+        const passwordInput = document.getElementById('password');
+
+        let selectedFiles = [];
+
+        dropzone.addEventListener('dragover', e => {{
+            e.preventDefault(); dropzone.classList.add('dragover');
+        }});
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+        dropzone.addEventListener('drop', e => {{
+            e.preventDefault(); dropzone.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        }});
+        fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+        function handleFiles(files) {{
+            if (!files.length) return;
+            selectedFiles = Array.from(files);
+            const names = selectedFiles.map(f => f.name).join(', ');
+            fileInfo.textContent = selectedFiles.length + ' file(s): ' + names;
+            dropzone.classList.add('has-file');
+            uploadBtn.disabled = false;
+        }}
+
+        uploadBtn.addEventListener('click', uploadFiles);
+
+        async function uploadFiles() {{
+            const formData = new FormData();
+            selectedFiles.forEach(f => formData.append('file', f));
+            if (passwordInput) {{
+                formData.append('password', passwordInput.value);
+            }}
+
+            uploadBtn.disabled = true;
+            progress.style.display = 'block';
+            progress.value = 0;
+            status.textContent = 'Uploading...';
+            status.className = '';
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload', true);
+
+            xhr.upload.onprogress = function(e) {{
+                if (e.lengthComputable) {{
+                    progress.value = (e.loaded / e.total) * 100;
+                }}
+            }};
+
+            xhr.onload = function() {{
+                if (xhr.status === 200) {{
+                    const resp = JSON.parse(xhr.responseText);
+                    status.textContent = 'Upload complete: ' + resp.filename;
+                    status.className = 'status-success';
+                    progress.value = 100;
+                    selectedFiles = [];
+                    dropzone.classList.remove('has-file');
+                    fileInfo.textContent = '';
+                }} else {{
+                    let msg = 'Upload failed';
+                    try {{
+                        const resp = JSON.parse(xhr.responseText);
+                        msg = resp.error || msg;
+                    }} catch(e) {{}}
+                    status.textContent = msg;
+                    status.className = 'status-error';
+                }}
+                uploadBtn.disabled = false;
+            }};
+
+            xhr.onerror = function() {{
+                status.textContent = 'Network error';
+                status.className = 'status-error';
+                uploadBtn.disabled = false;
+            }};
+
+            xhr.send(formData);
+        }}
+    </script>
 </body>
 </html>
 """

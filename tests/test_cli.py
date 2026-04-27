@@ -50,9 +50,34 @@ def test_parse_arguments_help():
         parse_arguments(['--help'])
 
 def test_parse_arguments_missing_file():
-    """Test that missing required file argument raises SystemExit."""
-    with pytest.raises(SystemExit):
-        parse_arguments([])
+    """Test that missing file argument is now valid (for --upload mode)."""
+    args = parse_arguments([])
+    assert args.file_paths == []
+    assert args.upload is None  # No upload flag either
+
+def test_parse_arguments_upload_standalone():
+    """Test parsing --upload without file paths."""
+    args = parse_arguments(['--upload'])
+    assert args.file_paths == []
+    assert args.upload == '.'
+
+def test_parse_arguments_upload_with_dir():
+    """Test parsing --upload with save directory."""
+    args = parse_arguments(['--upload', '/tmp/uploads'])
+    assert args.file_paths == []
+    assert args.upload == '/tmp/uploads'
+
+def test_parse_arguments_upload_password():
+    """Test parsing --upload-password."""
+    args = parse_arguments(['--upload', '--upload-password', 'secret'])
+    assert args.upload == '.'
+    assert args.upload_password == 'secret'
+
+def test_parse_arguments_share_and_upload():
+    """Test parsing file paths combined with --upload."""
+    args = parse_arguments(['./docs', '--upload', '/tmp/uploads'])
+    assert args.file_paths == ['./docs']
+    assert args.upload == '/tmp/uploads'
 
 def test_validate_arguments_valid():
     """Test validation with valid arguments."""
@@ -60,7 +85,9 @@ def test_validate_arguments_valid():
         file_paths=['test.txt'],
         port=8080,
         max_downloads=5,
-        timeout='5m'
+        timeout='5m',
+        upload=None,
+        upload_password=None,
     )
     # Should not raise exception
     validate_arguments(args)
@@ -71,7 +98,9 @@ def test_validate_arguments_invalid_port_low():
         file_paths=['test.txt'],
         port=1000,
         max_downloads=5,
-        timeout='5m'
+        timeout='5m',
+        upload=None,
+        upload_password=None,
     )
     with pytest.raises(ValueError, match="Port must be between 1024 and 65535"):
         validate_arguments(args)
@@ -82,7 +111,9 @@ def test_validate_arguments_invalid_port_high():
         file_paths=['test.txt'],
         port=70000,
         max_downloads=5,
-        timeout='5m'
+        timeout='5m',
+        upload=None,
+        upload_password=None,
     )
     with pytest.raises(ValueError, match="Port must be between 1024 and 65535"):
         validate_arguments(args)
@@ -93,7 +124,9 @@ def test_validate_arguments_invalid_max_downloads():
         file_paths=['test.txt'],
         port=8080,
         max_downloads=0,
-        timeout='5m'
+        timeout='5m',
+        upload=None,
+        upload_password=None,
     )
     with pytest.raises(ValueError, match="max_downloads must be a positive integer"):
         validate_arguments(args)
@@ -104,7 +137,9 @@ def test_validate_arguments_invalid_timeout_format():
         file_paths=['test.txt'],
         port=8080,
         max_downloads=5,
-        timeout='5' # Missing unit
+        timeout='5', # Missing unit
+        upload=None,
+        upload_password=None,
     )
     with pytest.raises(ValueError, match="Timeout must be in format"):
         validate_arguments(args)
@@ -115,7 +150,48 @@ def test_validate_arguments_invalid_timeout_unit():
         file_paths=['test.txt'],
         port=8080,
         max_downloads=5,
-        timeout='5x'
+        timeout='5x',
+        upload=None,
+        upload_password=None,
     )
     with pytest.raises(ValueError, match="Timeout unit must be"):
+        validate_arguments(args)
+
+def test_validate_arguments_upload_valid():
+    """Test validation with --upload and no file paths."""
+    args = argparse.Namespace(
+        file_paths=[],
+        port=8080,
+        max_downloads=5,
+        timeout='5m',
+        upload='.',
+        upload_password=None,
+    )
+    # Should not raise exception
+    validate_arguments(args)
+
+def test_validate_arguments_upload_password_without_upload():
+    """Test validation fails when --upload-password is used without --upload."""
+    args = argparse.Namespace(
+        file_paths=['test.txt'],
+        port=8080,
+        max_downloads=5,
+        timeout='5m',
+        upload=None,
+        upload_password='secret',
+    )
+    with pytest.raises(ValueError, match="--upload-password requires --upload"):
+        validate_arguments(args)
+
+def test_validate_arguments_no_paths_no_upload():
+    """Test validation fails when no file paths and no --upload."""
+    args = argparse.Namespace(
+        file_paths=[],
+        port=8080,
+        max_downloads=5,
+        timeout='5m',
+        upload=None,
+        upload_password=None,
+    )
+    with pytest.raises(ValueError, match="Provide one or more"):
         validate_arguments(args)

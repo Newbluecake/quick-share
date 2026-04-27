@@ -5,7 +5,13 @@ from typing import List, Tuple, Optional
 
 from .cli import parse_arguments, validate_arguments
 from .network import get_local_ip, get_all_lan_ips
-from .server import FileShareServer, DirectoryShareServer, MultiShareServer, find_available_port
+from .server import (
+    FileShareServer,
+    DirectoryShareServer,
+    MultiShareServer,
+    UploadServer,
+    find_available_port,
+)
 from .utils import format_file_size, parse_duration
 from . import logger
 
@@ -226,17 +232,6 @@ def main() -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-        # Validate all paths and detect name conflicts
-        try:
-            is_valid, resolved_paths, errors = validate_multi_paths(args.file_paths)
-            if not is_valid:
-                for err in errors:
-                    print(f"Error: {err}", file=sys.stderr)
-                sys.exit(1)
-        except PermissionError as e:
-            print(f"Error: Permission denied: {e}", file=sys.stderr)
-            sys.exit(1)
-
         # Get network info
         try:
             local_ip = get_local_ip()
@@ -258,41 +253,138 @@ def main() -> None:
         timeout_seconds = parse_duration(args.timeout)
         server_timeout_minutes = timeout_seconds / 60
 
-        # Build display label for startup message
-        if len(resolved_paths) == 1:
-            abs_path, path_type = resolved_paths[0]
-            item_label = os.path.basename(abs_path)
-            if path_type == "file":
-                size_label = format_file_size(os.path.getsize(abs_path))
+        # ---------------------------------------------------------------
+        # Upload mode detection
+        # ---------------------------------------------------------------
+        if args.upload is not None:
+            upload_save_dir = os.path.abspath(
+                args.upload if args.upload != '.' else os.getcwd()
+            )
+
+            if not args.file_paths:
+                # -- Standalone upload mode --------------------------
+                server = UploadServer(
+                    save_dir=upload_save_dir,
+                    port=port,
+                    timeout_minutes=server_timeout_minutes,
+                    max_sessions=args.max_downloads,
+                    upload_password=args.upload_password,
+                )
+
+                # Print startup message
+                print("Upload server started!")
+                print(f"Save directory: {upload_save_dir}")
+                print("")
+                for iface, iface_ip in all_ips:
+                    print(f"  {iface:12} http://{iface_ip}:{port}/upload")
+                print("")
+                print("Upload commands:")
+                if args.upload_password:
+                    print(f"  curl -F 'file=@myfile.txt' -H 'X-Upload-Password: {args.upload_password}' http://{local_ip}:{port}/upload")
+                else:
+                    print(f"  curl -F 'file=@myfile.txt' http://{local_ip}:{port}/upload")
+                print(f"Max sessions: {args.max_downloads}")
+                print(f"Timeout: {timeout_seconds} seconds")
             else:
-                size_label = "Directory"
+                # -- Integrated share + upload mode -------------------
+                # Validate all paths and detect name conflicts
+                try:
+                    is_valid, resolved_paths, errors = validate_multi_paths(args.file_paths)
+                    if not is_valid:
+                        for err in errors:
+                            print(f"Error: {err}", file=sys.stderr)
+                        sys.exit(1)
+                except PermissionError as e:
+                    print(f"Error: Permission denied: {e}", file=sys.stderr)
+                    sys.exit(1)
+
+                # Build display label for startup message
+                if len(resolved_paths) == 1:
+                    abs_path, path_type = resolved_paths[0]
+                    item_label = os.path.basename(abs_path)
+                    if path_type == "file":
+                        size_label = format_file_size(os.path.getsize(abs_path))
+                    else:
+                        size_label = "Directory"
+                else:
+                    names = [os.path.basename(p) for p, _ in resolved_paths]
+                    item_label = ", ".join(names[:3])
+                    if len(names) > 3:
+                        item_label += f" ... (+{len(names) - 3} more)"
+                    size_label = f"{len(resolved_paths)} items"
+
+                server = MultiShareServer(
+                    paths=resolved_paths,
+                    port=port,
+                    timeout_minutes=server_timeout_minutes,
+                    max_sessions=args.max_downloads,
+                    legacy_mode=args.legacy,
+                    upload_enabled=True,
+                    upload_save_dir=upload_save_dir,
+                    upload_password=args.upload_password,
+                )
+
+                # Print startup message
+                msg = logger.format_startup_message(
+                    ip=local_ip,
+                    port=port,
+                    filename=item_label,
+                    file_size=size_label,
+                    max_downloads=args.max_downloads,
+                    timeout=timeout_seconds,
+                    all_ips=all_ips,
+                )
+                print(msg)
+                print(f"Upload URL: http://{local_ip}:{port}/upload")
+
         else:
-            names = [os.path.basename(p) for p, _ in resolved_paths]
-            item_label = ", ".join(names[:3])
-            if len(names) > 3:
-                item_label += f" ... (+{len(names) - 3} more)"
-            size_label = f"{len(resolved_paths)} items"
+            # -- Share-only mode (existing behavior) --------------------
+            # Validate all paths and detect name conflicts
+            try:
+                is_valid, resolved_paths, errors = validate_multi_paths(args.file_paths)
+                if not is_valid:
+                    for err in errors:
+                        print(f"Error: {err}", file=sys.stderr)
+                    sys.exit(1)
+            except PermissionError as e:
+                print(f"Error: Permission denied: {e}", file=sys.stderr)
+                sys.exit(1)
 
-        # Always use MultiShareServer (single or multiple paths)
-        server = MultiShareServer(
-            paths=resolved_paths,
-            port=port,
-            timeout_minutes=server_timeout_minutes,
-            max_sessions=args.max_downloads,
-            legacy_mode=args.legacy,
-        )
+            # Build display label for startup message
+            if len(resolved_paths) == 1:
+                abs_path, path_type = resolved_paths[0]
+                item_label = os.path.basename(abs_path)
+                if path_type == "file":
+                    size_label = format_file_size(os.path.getsize(abs_path))
+                else:
+                    size_label = "Directory"
+            else:
+                names = [os.path.basename(p) for p, _ in resolved_paths]
+                item_label = ", ".join(names[:3])
+                if len(names) > 3:
+                    item_label += f" ... (+{len(names) - 3} more)"
+                size_label = f"{len(resolved_paths)} items"
 
-        # Print startup message
-        msg = logger.format_startup_message(
-            ip=local_ip,
-            port=port,
-            filename=item_label,
-            file_size=size_label,
-            max_downloads=args.max_downloads,
-            timeout=timeout_seconds,
-            all_ips=all_ips,
-        )
-        print(msg)
+            # Always use MultiShareServer (single or multiple paths)
+            server = MultiShareServer(
+                paths=resolved_paths,
+                port=port,
+                timeout_minutes=server_timeout_minutes,
+                max_sessions=args.max_downloads,
+                legacy_mode=args.legacy,
+            )
+
+            # Print startup message
+            msg = logger.format_startup_message(
+                ip=local_ip,
+                port=port,
+                filename=item_label,
+                file_size=size_label,
+                max_downloads=args.max_downloads,
+                timeout=timeout_seconds,
+                all_ips=all_ips,
+            )
+            print(msg)
 
         # Start server and wait for completion
         try:

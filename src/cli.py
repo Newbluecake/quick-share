@@ -80,7 +80,7 @@ def parse_arguments(args=None):
 
     parser.add_argument(
         "file_paths",
-        nargs='+',
+        nargs='*',
         help="One or more files or directories to share"
     )
 
@@ -109,6 +109,21 @@ def parse_arguments(args=None):
         help="Use legacy server-side rendered directory listing"
     )
 
+    parser.add_argument(
+        "--upload",
+        nargs='?',
+        const='.',
+        default=None,
+        help="Enable upload mode. Optionally specify save directory (default: current directory)"
+    )
+
+    parser.add_argument(
+        "--upload-password",
+        type=str,
+        default=None,
+        help="Password required for uploading"
+    )
+
     return parser.parse_args(args)
 
 def validate_arguments(args):
@@ -121,6 +136,19 @@ def validate_arguments(args):
     Raises:
         ValueError: If arguments are invalid.
     """
+    # Either file paths or --upload must be provided
+    if not args.file_paths and args.upload is None:
+        raise ValueError(
+            "Provide one or more files/directories to share, "
+            "or use --upload to start an upload server"
+        )
+
+    # --upload-password requires --upload
+    if args.upload_password is not None and args.upload is None:
+        raise ValueError(
+            "--upload-password requires --upload to be enabled"
+        )
+
     # Validate port
     if args.port is not None:
         if not (1024 <= args.port <= 65535):
