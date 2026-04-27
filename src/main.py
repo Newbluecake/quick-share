@@ -433,6 +433,7 @@ def main() -> None:
                 from .logger import (
                     format_peer_connected,
                     format_peer_unreachable,
+                    format_peer_transfer_complete,
                 )
                 address = peer_config["address"]
                 secret = peer_config["secret"]
@@ -441,6 +442,46 @@ def main() -> None:
                     result = client.say_hello(local_ip, port)
                     if result.get("status") == "ok":
                         print(format_peer_connected(address))
+
+                        # Auto-trigger download for shared files
+                        shared_paths = getattr(server, 'paths', None) or []
+                        file_items = [
+                            (p, t) for p, t in shared_paths if t == "file"
+                        ]
+                        if file_items:
+                            files = [
+                                {"name": os.path.basename(p), "size": os.path.getsize(p)}
+                                for p, _ in file_items
+                            ]
+                            file_paths = [p for p, _ in file_items]
+                            print(f"[{logger.get_timestamp()}] Requesting peer download ({len(files)} item(s))...")
+                            dl_result = client.request_download(files, local_ip, port)
+                            if dl_result.get("status") == "ok" and dl_result.get("path"):
+                                save_path = dl_result["path"]
+                                print(f"[{logger.get_timestamp()}] Sending to peer...")
+                                send_result = client.send_files(file_paths, save_path)
+                                if send_result.get("status") == "ok":
+                                    for f_info in send_result.get("files", []):
+                                        print(format_peer_transfer_complete(
+                                            "sent", f_info["name"], f_info["size"]
+                                        ))
+                                else:
+                                    err = send_result.get("message", "unknown")
+                                    print(f"[{logger.get_timestamp()}] Peer transfer failed: {err}")
+                            elif dl_result.get("status") != "cancelled":
+                                err = dl_result.get("message", dl_result.get("error", "unknown"))
+                                print(f"[{logger.get_timestamp()}] Peer download request failed: {err}")
+                        elif hasattr(server, 'save_dir'):
+                            print(f"[{logger.get_timestamp()}] Requesting peer upload...")
+                            ul_result = client.request_upload(local_ip, port)
+                            if ul_result.get("status") == "ok":
+                                for f_info in ul_result.get("files", []):
+                                    print(format_peer_transfer_complete(
+                                        "received", f_info["name"], f_info["size"]
+                                    ))
+                            elif ul_result.get("status") != "cancelled":
+                                err = ul_result.get("message", ul_result.get("error", "unknown"))
+                                print(f"[{logger.get_timestamp()}] Peer upload request failed: {err}")
                     else:
                         err = result.get("message", result.get("error", "unknown"))
                         print(format_peer_unreachable(address, err))
