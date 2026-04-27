@@ -5,6 +5,26 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-04-27
+
+### Added
+- **Bidirectional file upload support** - Upload files to the sharing server
+  - `quick-share --upload [dir]` starts a standalone upload-only server
+  - `quick-share <paths> --upload` adds upload capability to existing share pages
+  - Pure HTML5 upload page with drag-and-drop and progress bar
+  - Upload form integrated into both single-directory and multi-share SPA views
+- Optional password protection for uploads via `--upload-password <password>`
+  - Supports `X-Upload-Password` HTTP header (curl) and form field (browser)
+- Upload progress logging in terminal with ⬆️ emoji indicator
+- Auto-rename on filename conflict: `file.txt` → `file (1).txt` → `file (2).txt`
+- Upload and download share the same `-n` / `-t` quota limits
+- New `src/upload_handler.py` module with multipart parsing, file saving, and path traversal protection
+- `UploadServer` class for standalone mode, `UploadHandler` for HTTP request handling
+- SPA upload form with drag-drop, progress bar, and password support
+
+### Fixed
+- Synced `__version__` to 1.3.0 and added version bump checklist to CLAUDE.md
+
 ## [1.3.0] - 2026-03-30
 
 ### Added
@@ -56,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed directory ZIP download progress tracking by calculating size inline
 
-[1.3.0]: https://github.com/Newbluecake/quick-share/compare/v1.2.0...v1.3.0
+[1.4.0]: https://github.com/Newbluecake/quick-share/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v1.1.0
 
