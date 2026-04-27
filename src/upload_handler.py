@@ -6,8 +6,8 @@ file saving, auto-rename on filename conflicts, and upload progress tracking.
 All functions use pure Python standard library with no external dependencies.
 """
 
+import io
 import os
-import cgi
 import uuid
 import time
 import tempfile
@@ -87,6 +87,119 @@ class UploadProgressTracker:
 
 
 # ---------------------------------------------------------------------------
+# Minimal multipart parser (replaces cgi.FieldStorage removed in Python 3.13)
+# ---------------------------------------------------------------------------
+
+class _Field:
+    """Minimal stand-in for a cgi.FieldStorage file item."""
+    __slots__ = ('name', 'filename', 'value', 'file', 'type')
+
+    def __init__(self, name, filename, value, content_type):
+        self.name = name
+        self.filename = filename
+        self.type = content_type or 'application/octet-stream'
+        if isinstance(value, bytes):
+            self.file = io.BytesIO(value)
+            self.value = value
+        else:
+            self.file = io.BytesIO(value.encode('utf-8'))
+            self.value = value
+
+
+class _Form:
+    """Minimal stand-in for a cgi.FieldStorage result object."""
+    __slots__ = ('list',)
+
+    def __init__(self, fields):
+        self.list = fields if fields else None
+
+
+def _parse_content_disposition(header_value):
+    """Extract *name* and *filename* from a Content-Disposition header."""
+    name = None
+    filename = None
+    for part in header_value.split(';'):
+        part = part.strip()
+        if part.startswith('name='):
+            name = part[5:].strip('"')
+        elif part.startswith('filename='):
+            filename = part[9:].strip('"')
+    return name, filename
+
+
+def _parse_multipart_body(content_type, content_length, rfile):
+    """Parse a ``multipart/form-data`` body and return a :class:`_Form`.
+
+    Pure-Python replacement for :class:`cgi.FieldStorage` that was removed
+    in Python 3.13.
+    """
+    # Extract boundary from Content-Type header.
+    boundary = None
+    for part in content_type.split(';'):
+        part = part.strip()
+        if part.startswith('boundary='):
+            boundary = part[len('boundary='):]
+            if boundary.startswith('"') and boundary.endswith('"'):
+                boundary = boundary[1:-1]
+            break
+
+    if not boundary:
+        raise ValueError("No boundary parameter in Content-Type")
+
+    body = rfile.read(content_length)
+    boundary_bytes = b'--' + boundary.encode('utf-8')
+    parts = body.split(boundary_bytes)
+
+    fields = []
+    for part in parts:
+        # Strip surrounding \r\n.
+        if part[:2] == b'\r\n':
+            part = part[2:]
+        if part[-2:] == b'\r\n':
+            part = part[:-2]
+
+        # Skip preamble, epilogue, and close-delimiter fragment.
+        if not part or part == b'--':
+            continue
+
+        # Split headers from body.
+        header_end = part.find(b'\r\n\r\n')
+        if header_end == -1:
+            continue
+
+        header_section = part[:header_end].decode('utf-8', errors='replace')
+        body_bytes = part[header_end + 4:]
+
+        # Parse headers manually (avoids deprecated email.parser.HeaderParser).
+        headers = {}
+        for line in header_section.split('\r\n'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                headers[key.strip().lower()] = value.strip()
+
+        disp = headers.get('content-disposition', '')
+        name, filename = _parse_content_disposition(disp)
+        if name is None:
+            continue
+
+        content_type_field = headers.get('content-type', 'text/plain')
+
+        if filename:
+            value = body_bytes
+        else:
+            value = body_bytes.decode('utf-8', errors='replace')
+
+        fields.append(_Field(
+            name=name,
+            filename=filename,
+            value=value,
+            content_type=content_type_field,
+        ))
+
+    return _Form(fields)
+
+
+# ---------------------------------------------------------------------------
 # Multipart request parsing
 # ---------------------------------------------------------------------------
 
@@ -97,15 +210,14 @@ def parse_multipart_request(
     max_form_memory: int = 1024 * 1024,
     include_form_fields: bool = False,
 ):
-    """Parse a ``multipart/form-data`` POST body using stdlib facilities.
+    """Parse a ``multipart/form-data`` POST body without external dependencies.
 
     Args:
         content_type: Value of the ``Content-Type`` header (must contain
             ``multipart/form-data`` with a ``boundary`` parameter).
         content_length: Value of the ``Content-Length`` header.
         rfile: The input stream (e.g. ``handler.rfile``).
-        max_form_memory: Maximum in-memory buffer per field before falling
-            back to a temporary file (see :class:`cgi.FieldStorage`).
+        max_form_memory: Ignored; kept for backwards-compatible signature.
         include_form_fields: If True, returns a tuple ``(files, form_fields)``
             where *form_fields* is a dict of non-file form field values.
 
@@ -122,21 +234,8 @@ def parse_multipart_request(
             "Content-Type must be multipart/form-data with a boundary parameter"
         )
 
-    # cgi.FieldStorage needs the environment-like dict for its internal
-    # query string parsing.  We provide the minimum required entries.
-    env = {
-        'REQUEST_METHOD': 'POST',
-        'CONTENT_TYPE': content_type,
-        'CONTENT_LENGTH': str(content_length),
-    }
-
     try:
-        form = cgi.FieldStorage(
-            fp=rfile,
-            environ=env,
-            keep_blank_values=False,
-            strict_parsing=False,
-        )
+        form = _parse_multipart_body(content_type, content_length, rfile)
     except Exception as exc:
         raise ValueError(f"Failed to parse multipart request: {exc}") from exc
 
