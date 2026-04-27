@@ -33,7 +33,7 @@ _commit_file.write_text(f'__commit__ = "{get_commit()}"\n')
 try:
     setup(
         name="quick-share",
-        version="1.6.0",
+        version="1.6.1",
         description="Fast file sharing via HTTP server with automatic LAN IP detection",
         long_description=long_description,
         long_description_content_type="text/markdown",
