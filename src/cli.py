@@ -1,6 +1,6 @@
 import argparse
 import sys
-from . import __version__
+from . import __full_version__
 
 
 def is_update_command(args=None):
@@ -75,7 +75,7 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--version",
         action="version",
-        version=f"quick-share {__version__}"
+        version=f"quick-share {__full_version__}"
     )
 
     parser.add_argument(

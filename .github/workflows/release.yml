@@ -36,6 +36,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
+          python -c "import os; open(os.path.join('src', '_commit.py'), 'w').write('__commit__ = \"' + os.environ['GITHUB_SHA'][:7] + '\"\n')"
           pyinstaller --onefile --name quick-share src/main.py
 
       - name: Rename binary

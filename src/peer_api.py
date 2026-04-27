@@ -89,10 +89,10 @@ def _handle_peer_hello(handler) -> bool:
     peer_host = data.get("host", handler.client_address[0])
     peer_port = data.get("port", "unknown")
     try:
-        from . import __version__
+        from . import __full_version__
     except ImportError:
-        __version__ = "unknown"
-    _send_json(handler, {"status": "ok", "version": __version__,
+        __full_version__ = "unknown"
+    _send_json(handler, {"status": "ok", "version": __full_version__,
                           "peer": {"host": peer_host, "port": peer_port}})
     return True
 
