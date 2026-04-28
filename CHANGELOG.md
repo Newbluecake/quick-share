@@ -5,6 +5,16 @@ All notable changes to Quick Share will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-04-28
+
+### Added
+- **Graceful and force exit with Ctrl+C** — first `Ctrl+C` gracefully stops the server (closes HTTP server, cancels timeout timer), second `Ctrl+C` force quits immediately. Registered as a proper `SIGINT` signal handler instead of relying on `KeyboardInterrupt` exceptions
+- **Auto-exit after peer transfer** — server now exits automatically after an auto-triggered peer download or upload completes, instead of running indefinitely
+- **File dialog remembers last directory** — file/save/directory dialogs now start from the last used folder (stored in `~/.quick-share/config.json`), supported on zenity, kdialog, and PowerShell
+
+### Fixed
+- **"string indices must be integers" after peer upload** — `_handle_peer_receive` now returns file info as `{"name": ..., "size": ...}` dicts instead of plain basename strings, matching what the peer upload result handler expects
+
 ## [1.8.1] - 2026-04-28
 
 ### Fixed
