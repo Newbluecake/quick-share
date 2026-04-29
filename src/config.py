@@ -62,7 +62,7 @@ def get_last_dir() -> Optional[str]:
 def set_last_dir(path: str):
     """Remember a directory for the next file dialog."""
     config = load_config()
-    if os.path.isfile(path):
+    if not os.path.isdir(path):
         path = os.path.dirname(path)
     if path and os.path.isdir(path):
         config["last_dir"] = path
