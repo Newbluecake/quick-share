@@ -1673,7 +1673,7 @@ class ServeHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not found")
 
     def do_GET(self):
-        self.send_error(404, "Server mode — peer API only")
+        self.send_error(404, "Server mode - peer API only")
 
     def log_message(self, format, *args):
         pass
