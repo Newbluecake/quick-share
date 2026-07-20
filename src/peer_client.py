@@ -10,6 +10,44 @@ import uuid
 from urllib import request, error as urllib_error
 
 
+PEER_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+class _MultipartBody:
+    """Re-iterable multipart body that reads files in bounded chunks."""
+
+    def __init__(self, file_paths: list, boundary: str):
+        self._parts = []
+        self._closing = f"--{boundary}--\r\n".encode("utf-8")
+        content_length = len(self._closing)
+
+        for path in file_paths:
+            filename = os.path.basename(path)
+            header = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'
+                "Content-Type: application/octet-stream\r\n"
+                "\r\n"
+            ).encode("utf-8")
+            file_size = os.path.getsize(path)
+            self._parts.append((header, path))
+            content_length += len(header) + file_size + 2  # trailing CRLF
+
+        self.content_length = content_length
+
+    def __iter__(self):
+        for header, path in self._parts:
+            yield header
+            with open(path, "rb") as file_obj:
+                while True:
+                    chunk = file_obj.read(PEER_UPLOAD_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    yield chunk
+            yield b"\r\n"
+        yield self._closing
+
+
 class PeerClient:
     """HTTP client for communicating with a remote quick-share peer."""
 
@@ -58,7 +96,7 @@ class PeerClient:
         Returns {"status": "ok", "files": [...]}.
         """
         boundary = uuid.uuid4().hex
-        body = _build_multipart_body(file_paths, boundary)
+        body = _MultipartBody(file_paths, boundary)
 
         url = f"{self._base}/api/peer/receive"
         if save_path:
@@ -69,6 +107,7 @@ class PeerClient:
             data=body,
             headers={
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(body.content_length),
                 "X-Peer-Secret": self.secret,
             },
             method="POST",
@@ -106,18 +145,5 @@ class PeerClient:
 
 
 def _build_multipart_body(file_paths: list, boundary: str) -> bytes:
-    """Build a multipart/form-data body for file upload."""
-    parts = []
-    for path in file_paths:
-        filename = os.path.basename(path)
-        with open(path, "rb") as f:
-            content = f.read()
-        header = (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'
-            "Content-Type: application/octet-stream\r\n"
-            "\r\n"
-        )
-        parts.append(header.encode("utf-8") + content + b"\r\n")
-    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
-    return b"".join(parts)
+    """Build an in-memory multipart body (kept for compatibility/tests)."""
+    return b"".join(_MultipartBody(file_paths, boundary))

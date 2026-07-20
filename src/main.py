@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 
 from .cli import parse_arguments, validate_arguments
-from .network import get_local_ip, get_all_lan_ips
+from .network import get_local_ip, get_all_lan_ips, get_local_ip_for_target
 from .server import (
     FileShareServer,
     DirectoryShareServer,
@@ -469,7 +469,17 @@ def main() -> None:
                 secret = peer_config["secret"]
                 client = PeerClient(address, secret)
                 try:
-                    result = client.say_hello(local_ip, port)
+                    # Advertise the source IP selected by the route to this
+                    # peer.  The general default route may point at a VPN or
+                    # proxy interface that the peer cannot call back.
+                    try:
+                        peer_callback_ip = get_local_ip_for_target(
+                            client.host, client.port
+                        )
+                    except RuntimeError:
+                        peer_callback_ip = local_ip
+
+                    result = client.say_hello(peer_callback_ip, port)
                     if result.get("status") == "ok":
                         print(format_peer_connected(address))
 
@@ -486,7 +496,9 @@ def main() -> None:
                             ]
                             file_paths = [p for p, _ in file_items]
                             print(f"[{logger.get_timestamp()}] Requesting peer download ({len(files)} item(s))...")
-                            dl_result = client.request_download(files, local_ip, port)
+                            dl_result = client.request_download(
+                                files, peer_callback_ip, port
+                            )
                             if dl_result.get("status") == "ok" and dl_result.get("path"):
                                 save_path = dl_result["path"]
                                 print(f"[{logger.get_timestamp()}] Sending to peer...")
@@ -505,7 +517,9 @@ def main() -> None:
                                 print(f"[{logger.get_timestamp()}] Peer download request failed: {err}")
                         elif hasattr(server, 'save_dir'):
                             print(f"[{logger.get_timestamp()}] Requesting peer upload...")
-                            ul_result = client.request_upload(local_ip, port)
+                            ul_result = client.request_upload(
+                                peer_callback_ip, port
+                            )
                             if ul_result.get("status") == "ok":
                                 for f_info in ul_result.get("files", []):
                                     print(format_peer_transfer_complete(

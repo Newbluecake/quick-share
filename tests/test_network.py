@@ -7,7 +7,7 @@ import os
 # Ensure src is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.network import is_valid_lan_ip, get_local_ip
+from src.network import is_valid_lan_ip, get_local_ip, get_local_ip_for_target
 
 class TestNetwork(unittest.TestCase):
     def test_is_valid_lan_ip_private_ranges(self):
@@ -80,6 +80,31 @@ class TestNetwork(unittest.TestCase):
             get_local_ip()
 
         self.assertIn("Could not determine local IP", str(cm.exception))
+
+    @patch('socket.socket')
+    def test_get_local_ip_for_target_uses_peer_route(self, mock_socket_cls):
+        """The callback IP should follow the route to the configured peer."""
+        mock_socket = MagicMock()
+        mock_socket_cls.return_value = mock_socket
+        mock_socket.getsockname.return_value = ('192.168.31.25', 54321)
+
+        ip = get_local_ip_for_target('192.168.32.38', 8000)
+
+        self.assertEqual(ip, '192.168.31.25')
+        mock_socket.connect.assert_called_once_with(('192.168.32.38', 8000))
+        mock_socket.close.assert_called_once()
+
+    @patch('socket.socket')
+    def test_get_local_ip_for_target_rejects_unspecified_address(self, mock_socket_cls):
+        """An unspecified source address cannot be advertised to a peer."""
+        mock_socket = MagicMock()
+        mock_socket_cls.return_value = mock_socket
+        mock_socket.getsockname.return_value = ('0.0.0.0', 54321)
+
+        with self.assertRaises(RuntimeError) as cm:
+            get_local_ip_for_target('192.168.32.38', 8000)
+
+        self.assertIn("Could not determine local IP for target", str(cm.exception))
 
 if __name__ == '__main__':
     unittest.main()

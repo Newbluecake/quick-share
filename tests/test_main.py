@@ -1,10 +1,18 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, sentinel
 from pathlib import Path
 import sys
 import os
 
 from src.main import validate_file, main, detect_path_type, validate_path, handle_symlink, validate_multi_paths
+
+
+@pytest.fixture(autouse=True)
+def isolate_peer_config():
+    """Prevent main() tests from reading the developer's real peer config."""
+    with patch('src.config.get_peer_config', return_value=None):
+        yield
+
 
 # T-013: Path type detection tests
 def test_detect_path_type_file(tmp_path):
@@ -245,6 +253,46 @@ def test_main_directory_keyboard_interrupt(mock_logger, mock_multi_server, mock_
 
     mock_multi_server.assert_called_once()
     server_instance.stop.assert_called_once()
+
+def test_peer_upload_uses_route_specific_callback_ip():
+    """Forward the dynamically selected route address to the peer APIs."""
+    peer_host = "windows-peer.test"
+    peer_port = 8765
+    listen_port = 8000
+
+    server_instance = MagicMock()
+    server_instance.server_thread.is_alive.return_value = False
+    server_instance.paths = []
+    server_instance.save_dir = "/tmp/uploads"
+
+    peer_client = MagicMock()
+    peer_client.host = peer_host
+    peer_client.port = peer_port
+    peer_client.say_hello.return_value = {"status": "ok"}
+    peer_client.request_upload.return_value = {"status": "cancelled"}
+
+    with patch('sys.argv', ['quick-share', '--upload']), \
+         patch('src.main.get_local_ip',
+               return_value=sentinel.default_route_address), \
+         patch('src.main.get_all_lan_ips', return_value=[]), \
+         patch('src.main.get_local_ip_for_target',
+               return_value=sentinel.peer_route_address) as route_ip, \
+         patch('src.main.find_available_port', return_value=listen_port), \
+         patch('src.main.UploadServer', return_value=server_instance), \
+         patch('src.config.get_peer_config', return_value={
+             'address': f'{peer_host}:{peer_port}', 'secret': 'secret'
+         }), \
+         patch('src.peer_client.PeerClient', return_value=peer_client):
+        main()
+
+    route_ip.assert_called_once_with(peer_host, peer_port)
+    peer_client.say_hello.assert_called_once_with(
+        sentinel.peer_route_address, listen_port
+    )
+    peer_client.request_upload.assert_called_once_with(
+        sentinel.peer_route_address, listen_port
+    )
+
 
 # File validation tests
 def test_validate_file_success(tmp_path):

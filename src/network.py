@@ -77,6 +77,43 @@ def is_valid_lan_ip(ip: str) -> bool:
         return False
 
 
+def get_local_ip_for_target(host: str, port: int) -> str:
+    """Get the local IPv4 address used to reach a specific target.
+
+    A machine may have several interfaces (physical LAN, VPN, proxy, or
+    container networks).  The address used for general internet traffic is
+    not necessarily reachable by a LAN peer, so callback URLs must use the
+    source address selected by the route to that peer.
+
+    Args:
+        host: Target host name or IPv4 address.
+        port: Target UDP/TCP port.  No packet is sent by the UDP connect.
+
+    Returns:
+        The route-selected local IPv4 address.
+
+    Raises:
+        RuntimeError: If no usable source address can be determined.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect((host, port))
+            local_ip = sock.getsockname()[0]
+
+            ip_obj = ipaddress.ip_address(local_ip)
+            if ip_obj.version != 4 or ip_obj.is_unspecified or ip_obj.is_multicast:
+                raise RuntimeError(f"Found unusable source address {local_ip}")
+
+            return local_ip
+        finally:
+            sock.close()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not determine local IP for target {host}:{port}: {exc}"
+        ) from exc
+
+
 def get_local_ip() -> str:
     """Get the local LAN IP address.
 
