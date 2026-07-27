@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag to build
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
   contents: read
@@ -14,6 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - name: Verify immutable release tag checkout
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-27
         with:
           toolchain: 1.92.0
@@ -27,9 +44,10 @@ jobs:
         with:
           command: check
           command-arguments: licenses sources
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install MSRV-compatible cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit locked dependencies
+        run: cargo audit
 
   build:
     name: Build and smoke ${{ matrix.target }}
@@ -72,6 +90,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-27
         with:
           toolchain: 1.92.0
@@ -93,7 +113,7 @@ jobs:
       - name: Verify tag and Cargo binary versions agree
         shell: bash
         run: |
-          expected="quick-share ${GITHUB_REF_NAME#v}"
+          expected="quick-share ${RELEASE_TAG#v}"
           actual="$("$PWD/release-assets/${{ matrix.asset }}" --version)"
           test "$actual" = "$expected"
       - name: Smoke released Unix executable
@@ -115,7 +135,7 @@ jobs:
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           tar -C release-assets -czf \
             "release-assets/quick-share-${version}-${{ matrix.target }}.tar.gz" \
             "${{ matrix.asset }}"
@@ -123,7 +143,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:RELEASE_TAG.TrimStart('v')
           Compress-Archive -LiteralPath "release-assets/${{ matrix.asset }}" `
             -DestinationPath "release-assets/quick-share-$version-${{ matrix.target }}.zip"
       - name: Attest raw executable provenance
@@ -147,6 +167,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
@@ -180,7 +202,8 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-assets/*
+          tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           fail_on_unmatched_files: true

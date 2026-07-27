@@ -76,9 +76,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-27
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          toolchain: 1.92.0
+      - name: Install MSRV-compatible cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit locked dependencies
+        run: cargo audit
 
   installer-contracts:
     name: Installer contract (${{ matrix.os }})
