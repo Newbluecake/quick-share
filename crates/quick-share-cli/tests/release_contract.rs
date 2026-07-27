@@ -67,6 +67,12 @@ fn release_pipeline_contains_all_assets_integrity_and_smoke_gates() {
     ] {
         assert!(release.contains(required), "release is missing {required}");
     }
+    assert!(
+        release.contains("          path: release-assets\n")
+            && release.contains("          upload-release-assets: false")
+            && !release.contains("          path: release-assets/${{ matrix.asset }}"),
+        "SBOM action must scan the staged directory rather than treat one executable as a directory"
+    );
     for line in release
         .lines()
         .filter(|line| line.trim_start().starts_with("uses:"))
@@ -79,6 +85,12 @@ fn release_pipeline_contains_all_assets_integrity_and_smoke_gates() {
         assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
     }
     assert!(root.join("security/release-signing-key.pem").is_file());
+}
+
+#[test]
+fn fuzz_smoke_forces_the_pinned_nightly_over_the_workspace_toolchain() {
+    let ci = fs::read_to_string(root().join(".github/workflows/ci.yml")).expect("CI workflow");
+    assert!(ci.contains("RUSTUP_TOOLCHAIN: nightly-2026-07-01"));
 }
 
 #[test]

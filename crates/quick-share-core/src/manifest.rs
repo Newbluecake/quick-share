@@ -542,6 +542,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn portable_names_rename_case_collisions_without_filesystem_assumptions() {
+        let mut names = BTreeSet::new();
+        assert_eq!(
+            unique_portable_name("Report.txt", &mut names).expect("first name"),
+            "Report.txt"
+        );
+        assert_eq!(
+            unique_portable_name("report.txt", &mut names).expect("colliding name"),
+            "report (1).txt"
+        );
+    }
+
+    #[test]
     fn production_manifest_enforces_the_twenty_thousand_entry_bound() {
         let root = tempfile::tempdir().expect("temporary root");
         let source = root.path().join("source");

@@ -551,9 +551,11 @@ fn enforce_rate(
     device_id: &DeviceId,
     now: Instant,
 ) -> Result<(), OfferError> {
-    let window_start = now.checked_sub(policy.rate_window).unwrap_or(now);
     let entries = state.rates.entry(device_id.clone()).or_default();
-    while entries.front().is_some_and(|seen| *seen <= window_start) {
+    while entries
+        .front()
+        .is_some_and(|seen| elapsed_at_least(*seen, now, policy.rate_window))
+    {
         entries.pop_front();
     }
     if entries.len() >= policy.max_offers_per_window {
@@ -571,23 +573,30 @@ fn purge(state: &mut ManagerState, policy: &OfferPolicy, now: Instant) {
             send_resolution(offer, TransferStatus::Expired, None);
         }
     }
-    let replay_cutoff = now.checked_sub(policy.replay_ttl).unwrap_or(now);
-    state.seen.retain(|_, seen| *seen > replay_cutoff);
-    let rate_cutoff = now.checked_sub(policy.rate_window).unwrap_or(now);
+    state
+        .seen
+        .retain(|_, seen| !elapsed_at_least(*seen, now, policy.replay_ttl));
     state.rates.retain(|_, entries| {
-        while entries.front().is_some_and(|seen| *seen <= rate_cutoff) {
+        while entries
+            .front()
+            .is_some_and(|seen| elapsed_at_least(*seen, now, policy.rate_window))
+        {
             entries.pop_front();
         }
         !entries.is_empty()
     });
     state.grants.retain(|_, grant| now < grant.expires_at);
-    let terminal_cutoff = now.checked_sub(policy.terminal_retention).unwrap_or(now);
     let grants = &state.grants;
     state.offers.retain(|transfer_id, offer| {
         offer.status == TransferStatus::Offered
             || grants.contains_key(transfer_id)
-            || offer.updated_at > terminal_cutoff
+            || !elapsed_at_least(offer.updated_at, now, policy.terminal_retention)
     });
+}
+
+fn elapsed_at_least(then: Instant, now: Instant, duration: Duration) -> bool {
+    now.checked_duration_since(then)
+        .is_some_and(|elapsed| elapsed >= duration)
 }
 
 fn send_resolution(

@@ -286,6 +286,7 @@ async fn reject_and_timeout_wake_channels_without_authorization() {
     let peer = context(&local, &remote, "sender", &trust);
     let policy = OfferPolicy {
         confirmation_timeout: Duration::from_millis(10),
+        terminal_retention: Duration::MAX,
         ..OfferPolicy::default()
     };
     let manager = OfferManager::new(trust, policy);
@@ -468,6 +469,7 @@ fn replay_owner_isolation_rate_limit_and_queue_limit_fail_closed() {
     let policy = OfferPolicy {
         max_pending: 1,
         max_offers_per_window: 1,
+        rate_window: Duration::MAX,
         ..OfferPolicy::default()
     };
     let manager = OfferManager::new(trust, policy);

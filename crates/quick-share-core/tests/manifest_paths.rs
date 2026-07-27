@@ -132,7 +132,7 @@ fn manifest_contains_files_empty_directories_unicode_and_unique_top_names() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn manifest_renames_case_collisions_for_windows_portability() {
     let root = tempdir().expect("temporary root");

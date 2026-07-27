@@ -127,10 +127,11 @@ jobs:
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          path: release-assets/${{ matrix.asset }}
+          path: release-assets
           format: spdx-json
           output-file: release-assets/${{ matrix.asset }}.spdx.json
           upload-artifact: false
+          upload-release-assets: false
       - name: Create Unix release archive
         if: matrix.archive == 'tar.gz'
         shell: bash
