@@ -1,25 +1,27 @@
 # Quick Share
 
+**简体中文** | [English](README.en.md)
+
 [![CI](https://github.com/Newbluecake/quick-share/actions/workflows/ci.yml/badge.svg)](https://github.com/Newbluecake/quick-share/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Quick Share is a secure, single-binary LAN sharing CLI for Linux, macOS, and Windows. It discovers nearby receivers and transfers files, directories, text, or clipboard content over authenticated Noise XX encryption. If a successful scan finds no compatible receiver, it can start a browser-oriented HTTPS share instead.
+Quick Share 是一款面向 Linux、macOS 和 Windows 的安全单二进制局域网共享命令行工具。它可以发现附近的接收端，并通过经过身份认证的 Noise XX 加密传输文件、目录、文本或剪贴板内容。如果扫描成功但未发现兼容的接收端，它还可以改为启动面向浏览器的 HTTPS 共享。
 
-Quick Share 2.0 is the production Rust implementation. It replaces the Python 1.x runtime and peer protocol; see the [migration guide](docs/migration-v2.md) before upgrading.
+Quick Share 2.0 是用于生产环境的 Rust 实现，取代了 Python 1.x 运行时和对等传输协议。升级前请参阅[迁移指南](docs/migration-v2.md)。
 
-## Install
+## 安装
 
-No Python, pip, Node.js, or other language runtime is required.
+无需安装 Python、pip、Node.js 或其他语言运行时。
 
-### Linux and macOS
+### Linux 和 macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Newbluecake/quick-share/master/install.sh | bash
 ```
 
-The installer downloads one executable from the fixed GitHub repository, verifies `SHA256SUMS` plus the pinned Ed25519 release signature when OpenSSL supports it, installs to `~/.local/bin`, and creates `sc`/`rc` only when those names are free.
+安装程序会从固定的 GitHub 仓库下载一个可执行文件，校验 `SHA256SUMS`；当 OpenSSL 支持时，还会校验固定的 Ed25519 发布签名。随后程序会安装到 `~/.local/bin`，且仅在名称未被占用时创建 `sc`/`rc` 快捷命令。
 
-To inspect the installer before running it:
+如需在执行前检查安装脚本：
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/Newbluecake/quick-share/master/install.sh
@@ -33,33 +35,33 @@ bash install.sh
 iwr -useb https://raw.githubusercontent.com/Newbluecake/quick-share/master/install.ps1 | iex
 ```
 
-The default destination is `%LOCALAPPDATA%\QuickShare\bin`. Existing `sc` or `rc` commands are never overwritten. A Private-profile, program-scoped inbound firewall rule is added only when the installer is explicitly run with `-AddPrivateFirewallRule`.
+默认安装目录为 `%LOCALAPPDATA%\QuickShare\bin`。已有的 `sc` 或 `rc` 命令不会被覆盖。只有在安装程序显式传入 `-AddPrivateFirewallRule` 时，才会添加一条仅适用于专用网络配置文件、作用范围限定到本程序的入站防火墙规则。
 
-Prebuilt assets, `SHA256SUMS`, `SHA256SUMS.sig`, SBOMs, and GitHub build provenance are published on [GitHub Releases](https://github.com/Newbluecake/quick-share/releases).
+预构建产物、`SHA256SUMS`、`SHA256SUMS.sig`、SBOM 和 GitHub 构建来源证明均发布在 [GitHub Releases](https://github.com/Newbluecake/quick-share/releases)。
 
-## Quick start
+## 快速开始
 
-On the receiving computer:
+在接收端计算机上：
 
 ```bash
 quick-share receive
-# shortcut, when installed without a name conflict:
+# 安装时未发生名称冲突的情况下，可使用快捷命令：
 rc
 ```
 
-On the sending computer:
+在发送端计算机上：
 
 ```bash
 quick-share send report.pdf photos/
-# shortcut:
+# 快捷命令：
 sc report.pdf photos/
 ```
 
-The first unknown connection displays a six-digit SAS. Compare it on both terminals before choosing “accept and trust”. `--yes` permits one-time TOFU only; it never creates durable trust.
+首次连接未知设备时，两端会显示一个六位 SAS（短认证字符串）。请比较两个终端上的数字，确认一致后再选择“接受并信任”。`--yes` 只允许一次性 TOFU（首次使用时信任），不会创建持久信任关系。
 
-## Commands
+## 命令
 
-### Send files and directories
+### 发送文件和目录
 
 ```bash
 quick-share send file.txt directory/
@@ -69,18 +71,18 @@ quick-share send --web file.txt
 quick-share send --follow-links symlink
 ```
 
-Automatic Web fallback occurs **only** when discovery succeeds and finds zero compatible receivers. Discovery errors, partial scans, rejection, timeout, identity change, connection failure, and transfer failure do not fall back to Web.
+仅当发现流程成功完成且找到的兼容接收端数量为零时，才会自动回退到 Web 模式。发现错误、部分扫描、拒绝、超时、身份变更、连接失败和传输失败都不会触发 Web 回退。
 
-### Send text or clipboard content
+### 发送文本或剪贴板内容
 
 ```bash
 quick-share send --text 'hello from Quick Share'
 quick-share send --clipboard
 ```
 
-Received text is never executed or opened. Without an explicit output file, the receiver tries the native clipboard and safely falls back to stdout.
+接收到的文本绝不会被执行或打开。如果未显式指定输出文件，接收端会尝试写入系统原生剪贴板，并在失败时安全地回退到标准输出。
 
-### Receive
+### 接收
 
 ```bash
 quick-share receive
@@ -88,9 +90,9 @@ quick-share receive --output ~/Downloads/received
 quick-share receive --once --yes
 ```
 
-Unknown non-interactive offers are rejected unless `--yes` is supplied, and `--yes` can accept only once. The first Ctrl+C persists resumable state; a second interrupt forces termination.
+除非提供 `--yes`，否则非交互模式下来自未知设备的传输请求会被拒绝；即使提供 `--yes`，也只能接受一次。第一次按下 Ctrl+C 会保存可恢复状态，第二次中断则强制终止。
 
-### Traditional browser sharing
+### 传统浏览器共享
 
 ```bash
 quick-share serve file.txt directory/
@@ -99,15 +101,15 @@ QUICK_SHARE_UPLOAD_PASSWORD='choose-a-password' \
   quick-share serve --upload --output ~/Downloads/received
 ```
 
-Web mode uses a temporary self-signed HTTPS certificate by default. The terminal prints the actual listener, token URL, certificate fingerprint, QR code, expiration, and download limit. Browsers will warn about the temporary certificate; do not install it as a CA.
+Web 模式默认使用临时自签名 HTTPS 证书。终端会显示实际监听地址、带令牌的 URL、证书指纹、二维码、过期时间和下载次数限制。浏览器会对临时证书发出警告；请勿将其安装为证书颁发机构（CA）。
 
-Plaintext HTTP requires an explicit opt-in:
+使用明文 HTTP 必须显式选择：
 
 ```bash
 quick-share serve --allow-http file.txt
 ```
 
-### Trusted devices
+### 受信任设备
 
 ```bash
 quick-share devices list
@@ -116,9 +118,9 @@ quick-share devices rename <DEVICE_ID> laptop
 quick-share devices remove <DEVICE_ID>
 ```
 
-Trust is pinned to the complete authenticated static public key, not an IP address, device name, mDNS record, or short SAS.
+信任关系固定到完整的、经过身份认证的静态公钥，而不是 IP 地址、设备名称、mDNS 记录或简短 SAS。
 
-### Configuration
+### 配置
 
 ```bash
 quick-share config show
@@ -127,9 +129,9 @@ quick-share config set device.name workstation
 quick-share config set receive.output ~/Downloads/received
 ```
 
-Configuration precedence is command line, environment, TOML file, then built-in defaults. Identity and trust state are stored separately with private permissions.
+配置优先级依次为：命令行、环境变量、TOML 文件、内置默认值。身份信息与信任状态单独存储，并使用私有权限保护。
 
-### Signed self-update
+### 签名自更新
 
 ```bash
 quick-share update --check
@@ -138,25 +140,25 @@ quick-share update --yes
 quick-share update --version 2.0.0
 ```
 
-Updates are fetched only from `Newbluecake/quick-share`, bounded while streaming, verified against the signed SHA-256 manifest and pinned Ed25519 release key, startup-checked, and replaced with rollback protection. Redirects to plaintext or foreign hosts are rejected.
+更新只会从 `Newbluecake/quick-share` 获取；流式下载有大小限制，并使用签名的 SHA-256 清单和固定的 Ed25519 发布密钥进行校验。更新程序还会执行启动检查，并以具备回滚保护的方式替换程序。指向明文协议或外部主机的重定向会被拒绝。
 
-## Security model
+## 安全模型
 
-- Direct transfers use fixed `Noise_XX_25519_ChaChaPoly_BLAKE2s` with full static-key pinning.
-- Unknown peers may submit only a bounded offer before approval; transfer operations require short-lived, peer-bound authorization.
-- Files use BLAKE3 chunk and final integrity verification, staging, durable journals, and atomic commit.
-- Web mode uses random 128-bit access tokens, path-independent catalog IDs, canonical containment checks, strict limits, no-store/no-referrer headers, and default HTTPS.
-- Product crates forbid unsafe Rust. Dependencies are checked with RustSec and protocol framing is fuzzed in CI.
-- The release updater pins an Ed25519 public key in the binary. The private key exists only as the protected `RELEASE_SIGNING_KEY_PEM` GitHub Actions secret.
+- 直接传输固定使用 `Noise_XX_25519_ChaChaPoly_BLAKE2s`，并固定完整静态密钥。
+- 未知对等端在获批前只能提交有大小限制的传输请求；传输操作需要绑定到对等端的短期授权。
+- 文件使用 BLAKE3 进行分块及最终完整性校验，并采用暂存区、持久化日志和原子提交。
+- Web 模式使用随机 128 位访问令牌、与路径无关的目录项 ID、规范路径包含性检查、严格限制，以及 `no-store`/`no-referrer` 响应头，并默认启用 HTTPS。
+- 产品 crate 禁止使用不安全 Rust。依赖项通过 RustSec 检查，协议帧在 CI 中进行模糊测试。
+- 发布更新程序在二进制中固定 Ed25519 公钥。私钥仅作为受保护的 GitHub Actions Secret `RELEASE_SIGNING_KEY_PEM` 存在。
 
-See [`SECURITY.md`](SECURITY.md) for reporting issues and [`docs/migration-v2.md`](docs/migration-v2.md) for v1 migration and rollback guidance.
+有关漏洞报告方式，请参阅 [`SECURITY.md`](SECURITY.md)；有关 v1 迁移与回滚指导，请参阅 [`docs/migration-v2.md`](docs/migration-v2.md)。
 
-## Build and test
+## 构建和测试
 
-Requirements:
+环境要求：
 
-- Rust 1.92.0, as pinned by `rust-toolchain.toml`
-- platform C toolchain required by Rust dependencies
+- Rust 1.92.0，由 `rust-toolchain.toml` 固定
+- Rust 依赖项所需的平台 C 工具链
 
 ```bash
 git clone https://github.com/Newbluecake/quick-share.git
@@ -167,27 +169,27 @@ cargo test --workspace --all-targets --all-features --locked
 cargo build --workspace --release --locked
 ```
 
-Or run:
+也可以运行：
 
 ```bash
 ./build.sh
 ```
 
-The only product executable is `target/release/quick-share`. The installer creates aliases; Cargo does not build separate `sc` or `rc` programs.
+唯一的产品可执行文件是 `target/release/quick-share`。安装程序会创建快捷命令；Cargo 不会另外构建 `sc` 或 `rc` 程序。
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and review requirements.
+开发与评审要求请参阅 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
-## Platform notes
+## 平台说明
 
-- Discovery is link-local mDNS. For routed or multicast-restricted networks, use `--peer host:port`.
-- Current macOS artifacts are unsigned and not notarized because the project has no Apple Developer account; Gatekeeper may require an explicit user override. This does not weaken the Ed25519 release-manifest verification.
-- Quick Share never silently changes firewall or network-profile settings.
-- Windows Public-profile inbound rules may block connections; diagnostics provide guidance without modifying the system.
-- Every direct send prints a transfer UUID. After an interrupted sender or receiver process, rerun the same content and target with `--resume UUID`; the receiver accepts only the exact authenticated sender and immutable manifest, then requests missing chunks.
-- Windows subprocess output is normalized from UTF-8, UTF-16LE, or legacy GBK into internal UTF-8; PowerShell scripts explicitly select UTF-8. File contents and redirected transfer payloads are never transcoded.
-- Headless Linux clipboard access safely falls back to stdout/file output.
-- Symbolic links are transferred as links by default; `--follow-links` must be explicit.
+- 发现功能使用链路本地 mDNS。对于经过路由或限制组播的网络，请使用 `--peer host:port`。
+- 由于项目没有 Apple Developer 账户，当前 macOS 产物未签名且未经公证；Gatekeeper 可能要求用户显式允许。这不会削弱 Ed25519 发布清单校验。
+- Quick Share 绝不会静默更改防火墙或网络配置文件设置。
+- Windows 公用网络配置文件的入站规则可能阻止连接；诊断功能只会提供指导，不会修改系统。
+- 每次直接发送都会输出一个传输 UUID。发送端或接收端进程中断后，可使用 `--resume UUID` 对相同内容和目标重新执行命令；接收端仅接受完全相同且已经身份认证的发送方和不可变清单，随后请求缺失的数据块。
+- Windows 子进程输出会从 UTF-8、UTF-16LE 或传统 GBK 统一转换为内部 UTF-8；PowerShell 脚本会显式选择 UTF-8。文件内容和重定向的传输载荷绝不会被转码。
+- 无图形界面的 Linux 环境无法访问剪贴板时，会安全地回退到标准输出或文件输出。
+- 默认以符号链接形式传输符号链接；必须显式提供 `--follow-links` 才会跟随链接。
 
-## License
+## 许可证
 
 MIT
