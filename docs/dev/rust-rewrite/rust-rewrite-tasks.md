@@ -964,7 +964,7 @@ pytest
 
 ### T-024：跨平台、性能、安全与发布总验收
 
-**状态**：🟡 Conditional PASS（`rust-rewrite-acceptance-report.md`）；用户批准延期macOS真机/Apple签名和当前GitHub candidate动作，代码级P0/P1已关闭，最终`v2.0.0` tag仍等待发布负责人明确批准
+**状态**：✅ 已完成（`rust-rewrite-acceptance-report.md`、`Batch-9-review.md`）；代码级P0/P1已关闭，macOS真机/Apple签名与公证按批准范围延期，发布负责人已于2026-07-27明确批准`v2.0.0` tag
 
 **目标**：证明 Rust 2.0 候选版本满足需求文档，而不只是在开发机上工作。
 

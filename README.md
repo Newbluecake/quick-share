@@ -5,7 +5,7 @@
 
 Quick Share is a secure, single-binary LAN sharing CLI for Linux, macOS, and Windows. It discovers nearby receivers and transfers files, directories, text, or clipboard content over authenticated Noise XX encryption. If a successful scan finds no compatible receiver, it can start a browser-oriented HTTPS share instead.
 
-The Rust 2.0 rewrite is currently versioned `2.0.0-alpha.0`. Release approval remains subject to the final cross-platform acceptance gate.
+Quick Share 2.0 is the production Rust implementation. It replaces the Python 1.x runtime and peer protocol; see the [migration guide](docs/migration-v2.md) before upgrading.
 
 ## Install
 

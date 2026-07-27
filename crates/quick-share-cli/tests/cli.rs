@@ -39,7 +39,10 @@ fn version_comes_from_the_workspace_package() {
 
     // Assert
     assert!(output.status.success());
-    assert_eq!(stdout.trim(), "quick-share 2.0.0-alpha.0");
+    assert_eq!(
+        stdout.trim(),
+        format!("quick-share {}", env!("CARGO_PKG_VERSION"))
+    );
 }
 
 #[test]

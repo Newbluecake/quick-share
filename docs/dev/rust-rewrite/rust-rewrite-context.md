@@ -3,7 +3,7 @@
 > **功能标识**: rust-rewrite
 > **复杂度**: complex
 > **工作流模式**: normal（planning=batch, execution=batch）
-> **最后更新**: 2026-07-27T15:01:53+08:00
+> **最后更新**: 2026-07-27T16:30:00+08:00
 
 ## 配置参数
 
@@ -28,7 +28,8 @@ parallel: auto
 | 阶段 2：技术设计 | v2 已完成并获批准 | `rust-rewrite-design.md` |
 | 阶段 3：任务拆分 | 已完成并获批准 | `rust-rewrite-tasks.md` |
 | 阶段 4：环境准备 | 已完成 | 正式 Rust workspace、toolchain、CI |
-| 阶段 5：代码实施 | Batch 9 Conditional PASS，等待最终tag批准 | T-024、`rust-rewrite-acceptance-report.md` |
+| 阶段 5：代码实施 | 已完成；Batch 9 Conditional PASS范围获发布负责人批准 | T-024、`rust-rewrite-acceptance-report.md`、`Batch-9-review.md` |
+| 阶段 6：正式发布 | 执行中 | 合并`master`、`v2.0.0` tag与签名发布产物 |
 
 ## Planning 结论摘要
 
@@ -161,7 +162,7 @@ Batch 0 已按 Conditional Go 获批，验证结果：
 
 ## Batch 9 结果与最终发布闸门
 
-用户已批准T-024执行，并明确调整范围：当前无macOS机器和Apple Developer账号，macOS true-host、Developer ID签名、公证和Gatekeeper无警告安装延期；随后指示当前不再处理gh，因此不创建/tag/publish真实signed candidate，也不把未读取的hosted runner结果计入通过。
+用户已批准T-024执行，并明确调整范围：当前无macOS机器和Apple Developer账号，macOS true-host、Developer ID签名、公证和Gatekeeper无警告安装延期；hosted runner结果不得替代true-host证据。发布负责人随后于2026-07-27明确批准正式`v2.0.0` tag和发布。
 
 已完成：
 
@@ -173,6 +174,7 @@ Batch 0 已按 Conditional Go 获批，验证结果：
 6. Windows release smoke、10,000 Unicode files、process restart resume、Pester 11/11通过；
 7. Rust 167 tests listed（166 passed、1 true-host mDNS ignored）；RustSec 366 dependencies无advisory；cargo-deny licenses/sources、actionlint、Windows cross、fmt、Clippy通过；
 8. fuzz 2,306,514 runs / 31 seconds无crash/panic/OOM/sanitizer finding；
-9. 总报告：`rust-rewrite-acceptance-report.md`；当前批准范围内无未处理代码级P0/P1。
+9. 总报告：`rust-rewrite-acceptance-report.md`；当前批准范围内无未处理代码级P0/P1；
+10. Python产品代码、tests、packaging和最后一个验收helper均已删除；历史设计文档只作为迁移记录保留。
 
-当前唯一闸门是发布负责人对final `v2.0.0` tag的单独明确批准。报告明确不声称延期的macOS true-host/Apple signing或真实GitHub remote updater已通过。
+最终tag批准门已由发布负责人明确解除。当前执行合并`master`、创建并推送`v2.0.0`，然后验证签名checksums、SBOM、provenance和release smoke。报告仍明确不声称延期的macOS true-host/Apple signing或真实GitHub remote updater已通过。

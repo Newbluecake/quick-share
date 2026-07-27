@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-27
+
 ### Added
 - Complete Rust CLI with `send`, `receive`, `serve`, `devices`, `config`, and signed `update` commands, plus conflict-safe `sc` and `rc` shortcuts.
 - Authenticated Noise XX device transfer with SAS comparison, full static-key trust pinning, bounded offers, BLAKE3 integrity, resumable chunks, finite retry, progress, cancellation, files, directories, safe symbolic links, text, and clipboard support.
@@ -18,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Replaced the Python HTTP peer/shared-secret design with an incompatible QSP/1 Noise protocol and platform-standard TOML/identity/trust state.
 - Automatic Web fallback now occurs only after a successful discovery scan finds zero compatible receivers.
-- Cargo workspace metadata is the only version source. The current development version is `2.0.0-alpha.0`; final `2.0.0` remains gated by cross-platform acceptance.
+- Cargo workspace metadata is the only version source; the release tag, package metadata, and binary `--version` must all report `2.0.0`.
 - Windows subprocess text is normalized from UTF-8, UTF-16LE, or legacy GBK into internal UTF-8; file payload bytes are never transcoded.
 - Small-file transfer uses TCP_NODELAY, bounded append-only chunk checkpoints and batched final commits, avoiding quadratic journal rewrites while preserving fail-closed recovery.
 
@@ -306,6 +308,8 @@ See `docs/migration-v2.md` for command changes, configuration migration, and rol
 - Basename-only file access enforcement
 - No directory listing exposure
 
+[Unreleased]: https://github.com/Newbluecake/quick-share/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.0.0
 [1.0.12]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.12
 [1.0.11]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.11
 [1.0.10]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.10

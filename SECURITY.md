@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are provided for the newest published Quick Share 2.x release. The `2.0.0-alpha.0` development line is not yet approved for production release.
+Security fixes are provided for the newest published Quick Share 2.x release. Python 1.x releases are no longer supported; upgrade to Quick Share 2.0 or later.
 
 ## Reporting a vulnerability
 

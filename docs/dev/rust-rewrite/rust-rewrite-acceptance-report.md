@@ -4,7 +4,7 @@
 > 候选版本：`2.0.0-alpha.0`
 > 候选提交：`c553e9b3e09e2cd4618b33d8552bc45e9aa5820f`
 > 范围：T-024 / Batch 9
-> 当前结论：**本地与Windows可用环境P0/P1通过；macOS真机/Apple签名及真实GitHub signed candidate按用户指示延期；最终`v2.0.0` tag尚未批准**
+> 当前结论：**本地与Windows可用环境P0/P1通过；macOS真机/Apple签名按批准范围延期；发布负责人已于2026-07-27批准最终`v2.0.0` tag与发布**
 
 ## 1. 验收政策与明确延期
 
@@ -23,7 +23,7 @@
 - **PASS**：本候选代码或真实binary已执行并有证据；
 - **PASS (automated)**：自动化测试覆盖，但当前没有额外true-host手工设备；
 - **DEFERRED (approved)**：用户明确接受的外部设备/账号/发布动作延期；
-- **BLOCKED**：未获豁免且阻止最终tag。本报告当前没有代码级P0/P1 blocker，但最终tag仍需发布负责人单独批准。
+- **BLOCKED**：未获豁免且阻止最终tag。本报告没有代码级P0/P1 blocker；最终tag批准门已于2026-07-27解除。
 
 ## 2. Red 基线与本批修复
 
@@ -219,11 +219,10 @@ GitHub-hosted matrix曾由draft PR启动，但用户随后明确要求不再处�
 
 - macOS Intel/Apple Silicon true-host功能已通过；
 - macOS Developer ID签名/公证已完成；
-- public GitHub `v2.0.0-alpha.0` signed assets和real remote self-update已通过；
-- final `v2.0.0` tag已获发布负责人批准。
+- public GitHub `v2.0.0` signed assets和real remote self-update已通过（必须等发布工作流和产物验证后才能声明）。
 
 ### 最终状态
 
-**T-024在用户调整后的本轮执行范围内为Conditional PASS。**
+**T-024在用户调整后的本轮执行范围内为Conditional PASS；该范围和最终`v2.0.0`发布已由发布负责人于2026-07-27明确批准。**
 
-最终`v2.0.0` tag必须另行获得用户/发布负责人明确批准。如果未来恢复macOS或GitHub发布工作，应补充本报告DEFERRED项，不需要重做独立且代码未变的Linux/Windows、安全和性能证据。
+发布后仍需验证实际GitHub资产、签名、SBOM、provenance和release smoke；这不会改变macOS true-host/Apple signing的DEFERRED状态。未来补充DEFERRED项时，不需要重做独立且代码未变的Linux/Windows、安全和性能证据。

@@ -3,7 +3,8 @@
 > 日期：2026-07-27
 > 候选：`2.0.0-alpha.0` / `c553e9b`
 > 完整证据：`rust-rewrite-acceptance-report.md`
-> 结论：**用户调整范围内Conditional PASS；无未处理代码级P0/P1；final v2.0.0 tag等待单独批准**
+> 评审结论：**用户调整范围内Conditional PASS；无未处理代码级P0/P1**
+> 发布批准：用户/发布负责人已于2026-07-27在评审后明确批准final `v2.0.0` tag
 
 ## 阶段1：规范符合性
 
@@ -75,11 +76,11 @@ actionlint / signing-key consistency / diff check: PASS
 
 ## 发布边界
 
-此评审不是final tag授权。以下陈述仍禁止：
+此评审本身不是final tag授权。在获得后续独立批准前，以下陈述禁止：
 
 - “macOS Intel/Apple Silicon true-host已通过”；
 - “macOS binary已Developer ID签名/公证”；
 - “真实GitHub signed candidate self-update已通过”；
-- “v2.0.0 tag已获批准”。
+- “v2.0.0 tag已获批准”（除非有评审后的独立授权记录）。
 
-最终tag必须由用户/发布负责人在阅读`rust-rewrite-acceptance-report.md`后单独明确批准。
+该独立批准门已于2026-07-27由用户/发布负责人明确解除；此后仍需验证实际发布资产。
