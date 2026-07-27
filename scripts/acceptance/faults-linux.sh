@@ -60,12 +60,19 @@ grep -q 'check receiver disk space, output permissions' "$root/full-send.log"
 test ! -e "$root/full-out/large.bin"
 kill "$full_pid" 2>/dev/null || true; wait "$full_pid" 2>/dev/null || true
 
-# Port conflicts fail without touching firewall or another listener.
-python3 - "$((base_port + 3))" <<'PY' >"$root/port-holder.log" 2>&1 &
-import socket,sys,time
-s=socket.socket();s.bind(('127.0.0.1',int(sys.argv[1])));s.listen();time.sleep(30)
-PY
-holder=$!; pids+=("$holder"); sleep .2
+# Port conflicts fail without touching firewall or another listener. Use the
+# product itself as the holder so the acceptance harness needs no external runtime.
+mkdir -p "$root/holder-home" "$root/holder-out"
+HOME="$root/holder-home" XDG_CONFIG_HOME="$root/holder-home/config" \
+XDG_STATE_HOME="$root/holder-home/state" \
+    "$binary" receive --bind 127.0.0.1 --port "$((base_port + 3))" --yes \
+    --output "$root/holder-out" >"$root/port-holder.log" 2>&1 &
+holder=$!; pids+=("$holder")
+for _ in $(seq 1 100); do
+    grep -q 'receiver is ready' "$root/port-holder.log" && break
+    kill -0 "$holder" 2>/dev/null || exit 1
+    sleep 0.05
+done
 mkdir -p "$root/port-home"
 if HOME="$root/port-home" XDG_CONFIG_HOME="$root/port-home/config" XDG_STATE_HOME="$root/port-home/state" "$binary" receive --bind 127.0.0.1 --port "$((base_port + 3))" --once --yes --output "$root/port-out" >"$root/port.log" 2>&1; then echo 'port conflict unexpectedly succeeded' >&2; exit 1; fi
 grep -q 'Address already in use' "$root/port.log"
