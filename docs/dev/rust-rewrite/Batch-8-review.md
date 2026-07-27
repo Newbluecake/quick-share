@@ -91,7 +91,8 @@
 - 删除 `src/*.py`、全部 Python tests、`setup.py`、`pyproject.toml`、requirements、coverage/PyInstaller build 和 Python CI；
 - `Cargo.toml [workspace.package].version` 是唯一 product/package version source；cargo metadata只列出一个 binary：`quick-share`；
 - release workflow禁止 `setup-python`、pip、PyInstaller和 Python entrypoint；
-- v1 shared secret不迁移为 v2 trust；旧 config只保留安全 output directory，migration文档提供 tag v1.9.1 rollback步骤。
+- v1 shared secret不迁移为 v2 trust；旧 config只保留安全 output directory，migration文档提供 tag v1.9.1 rollback步骤；
+- 切换历史按任务要求拆分：前置提交 `c371fcf` 已包含完整Rust实现但仍保留全部Python源码/packaging；从该提交导出的干净源码已成功构建 `quick_share-1.9.1-py3-none-any.whl`。紧随其后的独立 `chore!: remove Python runtime after Rust parity`提交只执行Python runtime/tests/packaging切除和切换证据更新。
 
 ### 2.4 Windows GBK→UTF-8 补充需求
 
@@ -190,7 +191,8 @@ git diff --check                                                     PASS
 - Windows GBK/UTF test executable：2/2；UTF-8、UTF-16LE、GBK中文转换一致；
 - Windows GNU all-target/all-feature check和release binary build通过；
 - Cargo metadata：唯一binary `quick-share`，全部product crates version `2.0.0-alpha.0`；
-- Python runtime scan：无 `.py`、`src/`、setup/pyproject/requirements/PyInstaller spec；
+- Python predecessor (`c371fcf`)：`python3 setup.py bdist_wheel`成功生成`quick_share-1.9.1-py3-none-any.whl`；
+- Python runtime scan：当前切换树无 `.py`、`src/`、setup/pyproject/requirements/PyInstaller spec；
 - release signing private-key scan：无 private PEM、GitHub token或secret value；GitHub Actions secret仅能列出名称/更新时间；
 - Web production 2 MiB download：start、1 MiB progress、2 MiB progress、completed日志与payload compare通过；
 - `noise_records` fuzz：1,499,582 runs / 21 seconds，无 crash、panic、OOM或sanitizer finding。

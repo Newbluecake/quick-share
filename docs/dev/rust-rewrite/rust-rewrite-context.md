@@ -151,6 +151,7 @@ Batch 0 已按 Conditional Go 获批，验证结果：
 - Shell/Bats installer：fixed origin、Ed25519/SHA-256、same-dir random staging、rollback和`sc`/`rc` no-clobber，8/8；
 - PowerShell/Pester installer：checksum、rollback、built-in `sc.exe` conflict、managed alias ownership、explicit Private-profile program firewall和UTF-8 output，Windows真机11/11；
 - T-023：建立Python→Rust 339-test迁移矩阵；README/CHANGELOG/CONTRIBUTING/SECURITY/build/migration全部切换；删除Python runtime/tests/setup/pyproject/requirements/PyInstaller；Cargo workspace是唯一version source和唯一`quick-share` binary；
+- 独立切换边界：`c371fcf`保留Python tree并经干净archive成功构建v1.9.1 wheel；紧随的`chore!: remove Python runtime after Rust parity`提交只移除Python runtime/tests/packaging并更新切换证据；
 - 补齐Web production bounded download/upload terminal progress和body-drop interruption；
 - 用户追加Windows encoding：command boundary支持strict UTF-8、UTF-16LE和GBK→UTF-8，Windows真机2/2；不转码file/text payload bytes；
 - 两阶段评审：`Batch-8-review.md`；评审中移除带RustSec中危advisory的Sigstore候选依赖，并修复Shell签名fail-open、PowerShell checksum变量冲突/staging cleanup、updater rollback、action pinning和uninstall ownership；Batch 8无未解决P0/P1；
