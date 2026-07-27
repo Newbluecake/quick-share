@@ -1,0 +1,27 @@
+[package]
+name = "quick-share-discovery"
+description = "Quick Share local-network service discovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+flume.workspace = true
+hex.workspace = true
+if-addrs.workspace = true
+mdns-sd.workspace = true
+quick-share-core.workspace = true
+quick-share-protocol.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

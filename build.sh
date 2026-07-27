@@ -1,25 +1,19 @@
-#!/bin/bash
-# Build script for Quick Share - Package into standalone executable
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-set -e
+toolchain_bin="$(dirname "$(rustup which --toolchain 1.92.0 rustc)")"
+PATH="$toolchain_bin:$PATH"
 
-echo "Building Quick Share executable..."
+echo "Checking Quick Share Rust workspace..."
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --all-features --locked
 
-# Install dependencies
-pip install -r requirements-dev.txt
+echo "Building the single release executable..."
+cargo build --workspace --release --locked
 
-# Run tests first
-echo "Running tests..."
-pytest tests/ -v
-
-# Build with PyInstaller
-echo "Packaging with PyInstaller..."
-pyinstaller --onefile \
-            --name quick-share \
-            --add-data "README.md:." \
-            src/main.py
-
-echo "Build complete! Executable at: dist/quick-share"
-echo ""
-echo "To test:"
-echo "  ./dist/quick-share --help"
+binary="target/release/quick-share"
+if [[ "${OS:-}" == "Windows_NT" ]]; then binary="${binary}.exe"; fi
+"$binary" --version
+"$binary" --help >/dev/null
+echo "Build complete: $binary"

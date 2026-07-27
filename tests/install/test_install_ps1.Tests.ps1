@@ -1,173 +1,124 @@
-# Pester tests for install.ps1
-# PowerShell 5.1+ compatible
-
 BeforeAll {
-    # Import the install script functions
     $scriptPath = Join-Path $PSScriptRoot "../../install.ps1"
-
-    # Mock the script by dot-sourcing it in a way that prevents execution
-    $scriptContent = Get-Content $scriptPath -Raw
-    # Remove the main execution block if it exists
-    $scriptContent = $scriptContent -replace '(?s)# Main execution.*$', ''
-
-    # Create a temporary script with just the functions
-    $tempScript = Join-Path $TestDrive "install_functions.ps1"
-    Set-Content -Path $tempScript -Value $scriptContent
-    . $tempScript
+    . $scriptPath
 }
 
-Describe "Get-DownloadUrl" {
-    It "returns correct GitHub release URL" {
-        $url = Get-DownloadUrl
-        $url | Should -Be "https://github.com/Newbluecake/quick-share/releases/latest/download/quick-share-windows.exe"
+Describe "Rust release mapping" {
+    It "maps AMD64 to the MSVC asset" {
+        Get-ReleaseTarget -Architecture "AMD64" | Should -Be "x86_64-pc-windows-msvc"
+        Get-AssetName -Target "x86_64-pc-windows-msvc" | Should -Be "quick-share-x86_64-pc-windows-msvc.exe"
+    }
+
+    It "rejects unsupported architectures" {
+        { Get-ReleaseTarget -Architecture "ARM32" } | Should -Throw
+    }
+
+    It "uses only the fixed repository and validates versions" {
+        Get-ReleaseDownloadRoot -RequestedVersion "latest" | Should -Be `
+            "https://github.com/Newbluecake/quick-share/releases/latest/download"
+        Get-ReleaseDownloadRoot -RequestedVersion "2.0.0" | Should -Be `
+            "https://github.com/Newbluecake/quick-share/releases/download/v2.0.0"
+        { Get-ReleaseDownloadRoot -RequestedVersion "../../evil" } | Should -Throw
     }
 }
 
-Describe "Get-InstallPath" {
-    It "returns path in LOCALAPPDATA directory" {
-        $path = Get-InstallPath
-        $path | Should -Match "\\quick-share$"
-        $path | Should -BeLike "*\AppData\Local\quick-share"
+Describe "Checksum verification" {
+    It "accepts one exact checksum and rejects duplicates or corruption" {
+        $candidate = Join-Path $TestDrive "candidate.exe"
+        $manifest = Join-Path $TestDrive "SHA256SUMS"
+        Set-Content -LiteralPath $candidate -Value "payload" -NoNewline
+        $digest = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath $manifest -Value "$digest  quick-share-target.exe"
+        { Test-ReleaseChecksum -Candidate $candidate -Manifest $manifest -AssetName "quick-share-target.exe" } | Should -Not -Throw
+
+        Set-Content -LiteralPath $manifest -Value @(
+            "$digest  quick-share-target.exe",
+            "$digest  quick-share-target.exe"
+        )
+        { Test-ReleaseChecksum -Candidate $candidate -Manifest $manifest -AssetName "quick-share-target.exe" } | Should -Throw
     }
 }
 
-Describe "Install-Binary" {
+Describe "Fixed-origin downloads" {
     BeforeEach {
-        # Use TestDrive for isolated testing
-        $testInstallDir = Join-Path $TestDrive "quick-share"
-        $testBinaryPath = Join-Path $testInstallDir "quick-share.exe"
-
-        # Mock Invoke-WebRequest
-        Mock Invoke-WebRequest {
-            param($Uri, $OutFile)
-            # Create a dummy file to simulate download
-            New-Item -ItemType File -Path $OutFile -Force | Out-Null
-            Set-Content -Path $OutFile -Value "dummy exe content"
-        }
+        Mock Invoke-WebRequest { return $null }
     }
 
-    It "creates target directory if it doesn't exist" {
-        $testInstallDir = Join-Path $TestDrive "quick-share-new"
-        $testBinaryPath = Join-Path $testInstallDir "quick-share.exe"
-
-        Test-Path $testInstallDir | Should -Be $false
-
-        Install-Binary -InstallPath $testInstallDir -DownloadUrl "https://example.com/file.exe"
-
-        Test-Path $testInstallDir | Should -Be $true
+    It "rejects foreign initial origins before downloading" {
+        { Receive-FixedReleaseFile -Uri "https://evil.example/file" -OutFile (Join-Path $TestDrive "x") } | Should -Throw
+        Should -Invoke Invoke-WebRequest -Times 0
     }
 
-    It "downloads file successfully" {
-        $testInstallDir = Join-Path $TestDrive "quick-share-download"
-        $testBinaryPath = Join-Path $testInstallDir "quick-share.exe"
-
-        Install-Binary -InstallPath $testInstallDir -DownloadUrl "https://example.com/file.exe"
-
-        Test-Path $testBinaryPath | Should -Be $true
-    }
-
-    It "calls Invoke-WebRequest with correct parameters" {
-        $testInstallDir = Join-Path $TestDrive "quick-share-params"
-        $downloadUrl = "https://github.com/test/download.exe"
-
-        Install-Binary -InstallPath $testInstallDir -DownloadUrl $downloadUrl
-
-        Should -Invoke Invoke-WebRequest -Times 1 -ParameterFilter {
-            $Uri -eq $downloadUrl
-        }
+    It "passes only a fixed GitHub release URL to Invoke-WebRequest" {
+        $url = "https://github.com/Newbluecake/quick-share/releases/latest/download/SHA256SUMS"
+        Receive-FixedReleaseFile -Uri $url -OutFile (Join-Path $TestDrive "sums")
+        Should -Invoke Invoke-WebRequest -Times 1 -ParameterFilter { $Uri -ceq $url }
     }
 }
 
-Describe "Add-ToPath" {
+Describe "No-clobber shortcuts and rollback" {
+    It "does not overwrite existing sc or rc files" {
+        $directory = Join-Path $TestDrive "bin"
+        New-Item -ItemType Directory -Path $directory | Out-Null
+        Set-Content -LiteralPath (Join-Path $directory "quick-share.exe") -Value "new"
+        Set-Content -LiteralPath (Join-Path $directory "sc.exe") -Value "existing-sc"
+        Set-Content -LiteralPath (Join-Path $directory "rc.exe") -Value "existing-rc"
+        Add-QuickShareAliases -DestinationDirectory $directory
+        Get-Content -LiteralPath (Join-Path $directory "sc.exe") | Should -Be "existing-sc"
+        Get-Content -LiteralPath (Join-Path $directory "rc.exe") | Should -Be "existing-rc"
+    }
+
+    It "preserves the old executable when the candidate cannot start" {
+        $directory = Join-Path $TestDrive "installed"
+        New-Item -ItemType Directory -Path $directory | Out-Null
+        $current = Join-Path $directory "quick-share.exe"
+        $candidate = Join-Path $TestDrive "bad.exe"
+        Set-Content -LiteralPath $current -Value "old-binary"
+        Set-Content -LiteralPath $candidate -Value "not-an-executable"
+        { Install-VerifiedBinary -Candidate $candidate -DestinationDirectory $directory } | Should -Throw
+        Get-Content -LiteralPath $current | Should -Be "old-binary"
+        @(Get-ChildItem -LiteralPath $directory -Filter ".quick-share.new.*").Count | Should -Be 0
+    }
+}
+
+Describe "Uninstall ownership" {
     BeforeEach {
-        # Mock registry operations
-        Mock Get-ItemProperty {
-            return @{ Path = "C:\Windows;C:\Program Files" }
-        }
-
-        Mock Set-ItemProperty {
-            param($Path, $Name, $Value)
-        }
+        Mock Remove-QuickSharePrivateFirewallRule { }
+        Mock Remove-FromUserPath { }
     }
 
-    It "adds directory to PATH when not present" {
-        $testPath = "C:\TestDir"
-
-        Add-ToPath -Directory $testPath
-
-        Should -Invoke Set-ItemProperty -Times 1 -ParameterFilter {
-            $Value -match [regex]::Escape($testPath)
-        }
-    }
-
-    It "skips when directory already in PATH" {
-        Mock Get-ItemProperty {
-            return @{ Path = "C:\Windows;C:\TestDir;C:\Program Files" }
-        }
-
-        $testPath = "C:\TestDir"
-
-        Add-ToPath -Directory $testPath
-
-        Should -Invoke Set-ItemProperty -Times 0
-    }
-
-    It "uses User environment registry path" {
-        $testPath = "C:\NewDir"
-
-        Add-ToPath -Directory $testPath
-
-        Should -Invoke Get-ItemProperty -Times 1 -ParameterFilter {
-            $Path -eq "Registry::HKEY_CURRENT_USER\Environment"
-        }
+    It "does not delete unmarked pre-existing sc or rc files" {
+        $directory = Join-Path $TestDrive "uninstall"
+        New-Item -ItemType Directory -Path $directory | Out-Null
+        Set-Content -LiteralPath (Join-Path $directory "quick-share.exe") -Value "managed-main"
+        Set-Content -LiteralPath (Join-Path $directory "sc.exe") -Value "existing-sc"
+        Set-Content -LiteralPath (Join-Path $directory "rc.exe") -Value "existing-rc"
+        Uninstall-QuickShare -DestinationDirectory $directory
+        Test-Path -LiteralPath (Join-Path $directory "quick-share.exe") | Should -Be $false
+        Get-Content -LiteralPath (Join-Path $directory "sc.exe") | Should -Be "existing-sc"
+        Get-Content -LiteralPath (Join-Path $directory "rc.exe") | Should -Be "existing-rc"
     }
 }
 
-Describe "Install-QuickShare (Integration)" {
-    BeforeAll {
-        # Mock all external calls for integration test
-        Mock Get-DownloadUrl { return "https://example.com/test.exe" }
-        Mock Get-InstallPath { return Join-Path $TestDrive "quick-share" }
-        Mock Install-Binary {
-            param($InstallPath, $DownloadUrl)
-            New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
-            $exePath = Join-Path $InstallPath "quick-share.exe"
-            Set-Content -Path $exePath -Value "test exe"
-        }
-        Mock Add-ToPath { param($Directory) }
-        Mock Write-Host { }
+Describe "Firewall is explicit and minimal" {
+    BeforeEach {
+        Mock Get-NetFirewallRule { return $null }
+        Mock New-NetFirewallRule { return $null }
     }
 
-    It "completes installation successfully" {
-        # This would call the main Install-QuickShare function
-        # For now, we'll test that all components work together
-        $installPath = Get-InstallPath
-        $downloadUrl = Get-DownloadUrl
-
-        Install-Binary -InstallPath $installPath -DownloadUrl $downloadUrl
-        Add-ToPath -Directory $installPath
-
-        $exePath = Join-Path $installPath "quick-share.exe"
-        Test-Path $exePath | Should -Be $true
-    }
-}
-
-Describe "Installation verification" {
-    It "produces executable quick-share.exe file" {
-        # This test verifies the final output
-        $testInstallDir = Join-Path $TestDrive "quick-share-final"
-        $testBinaryPath = Join-Path $testInstallDir "quick-share.exe"
-
-        Mock Invoke-WebRequest {
-            param($Uri, $OutFile)
-            New-Item -ItemType File -Path $OutFile -Force | Out-Null
-            # Simulate executable content
-            Set-Content -Path $OutFile -Value "MZ" -NoNewline
+    It "adds only a program-scoped Private TCP inbound rule" {
+        Add-QuickSharePrivateFirewallRule -Program "C:\QuickShare\quick-share.exe"
+        Should -Invoke New-NetFirewallRule -Times 1 -ParameterFilter {
+            $DisplayName -ceq "Quick Share (Private inbound)" -and
+            $Direction -ceq "Inbound" -and $Action -ceq "Allow" -and
+            $Profile -ceq "Private" -and $Protocol -ceq "TCP" -and
+            $Program -ceq "C:\QuickShare\quick-share.exe"
         }
+    }
 
-        Install-Binary -InstallPath $testInstallDir -DownloadUrl "https://example.com/test.exe"
-
-        Test-Path $testBinaryPath | Should -Be $true
-        (Get-Item $testBinaryPath).Length | Should -BeGreaterThan 0
+    It "refuses to alter an existing same-named rule" {
+        Mock Get-NetFirewallRule { return @{ DisplayName = "Quick Share (Private inbound)" } }
+        { Add-QuickSharePrivateFirewallRule -Program "C:\QuickShare\quick-share.exe" } | Should -Throw
+        Should -Invoke New-NetFirewallRule -Times 0
     }
 }

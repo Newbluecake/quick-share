@@ -1,0 +1,22 @@
+[package]
+name = "quick-share-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+quick-share-protocol = { path = "../crates/quick-share-protocol" }
+quick-share-transfer = { path = "../crates/quick-share-transfer", features = ["fuzzing"] }
+
+[[bin]]
+name = "noise_records"
+path = "fuzz_targets/noise_records.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

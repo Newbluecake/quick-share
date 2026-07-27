@@ -93,19 +93,19 @@ class PeerClient:
         self.host, self.port = address.split(":")
         self.port = int(self.port)
         self.secret = secret
-    
+
     def _request(self, method, path, body=None, timeout=30) -> dict:
         """发送 HTTP 请求，返回 JSON 响应"""
-    
+
     def say_hello(self, my_host: str, my_port: int) -> dict:
         """POST /api/peer/hello 告知对方我们的地址"""
-    
+
     def request_upload(self, timeout=120) -> dict:
         """POST /api/peer/request-upload 请求对方选择文件上传"""
-    
+
     def request_download(self, files: list[dict], timeout=120) -> dict:
         """POST /api/peer/request-download 请求对方准备接收文件"""
-    
+
     def send_files(self, file_paths: list[str], target_url: str) -> dict:
         """POST /api/peer/receive 发送文件（multipart）"""
 ```

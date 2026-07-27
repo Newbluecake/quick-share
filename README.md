@@ -1,149 +1,189 @@
 # Quick Share
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/Newbluecake/quick-share/actions/workflows/ci.yml/badge.svg)](https://github.com/Newbluecake/quick-share/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A lightweight command-line tool to quickly share a single file over HTTP. It automatically generates download links (curl/wget) for the receiver and shuts down after usage limits are met.
+Quick Share is a secure, single-binary LAN sharing CLI for Linux, macOS, and Windows. It discovers nearby receivers and transfers files, directories, text, or clipboard content over authenticated Noise XX encryption. If a successful scan finds no compatible receiver, it can start a browser-oriented HTTPS share instead.
 
-## 🚀 Quick Start
+The Rust 2.0 rewrite is currently versioned `2.0.0-alpha.0`. Release approval remains subject to the final cross-platform acceptance gate.
 
-Get started instantly with a single command.
+## Install
 
-**Linux / macOS**
+No Python, pip, Node.js, or other language runtime is required.
+
+### Linux and macOS
+
 ```bash
-curl -fsSL https://github.com/Newbluecake/quick-share/raw/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Newbluecake/quick-share/master/install.sh | bash
 ```
 
-**Windows (PowerShell)**
+The installer downloads one executable from the fixed GitHub repository, verifies `SHA256SUMS` plus the pinned Ed25519 release signature when OpenSSL supports it, installs to `~/.local/bin`, and creates `sc`/`rc` only when those names are free.
+
+To inspect the installer before running it:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Newbluecake/quick-share/master/install.sh
+less install.sh
+bash install.sh
+```
+
+### Windows PowerShell
+
 ```powershell
-iwr -useb https://github.com/Newbluecake/quick-share/raw/master/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/Newbluecake/quick-share/master/install.ps1 | iex
 ```
 
-## ✨ Features
+The default destination is `%LOCALAPPDATA%\QuickShare\bin`. Existing `sc` or `rc` commands are never overwritten. A Private-profile, program-scoped inbound firewall rule is added only when the installer is explicitly run with `-AddPrivateFirewallRule`.
 
-- **⚡ Instant Sharing**: Share a file with one command. No configuration needed.
-- **🌐 Auto IP Detection**: Automatically finds your machine's LAN IP address.
-- **🔒 Secure**: Exposes *only* the specific file you chose. No directory access.
-- **⏳ Auto-Stop**: Server automatically stops after a set number of downloads or time limit.
-- **📋 Ready-to-Use Links**: Generates `curl` and `wget` commands for easy copying.
-- **📊 Live Monitoring**: Shows real-time download progress and logs.
+Prebuilt assets, `SHA256SUMS`, `SHA256SUMS.sig`, SBOMs, and GitHub build provenance are published on [GitHub Releases](https://github.com/Newbluecake/quick-share/releases).
 
-## 📦 Installation
+## Quick start
 
-### Linux & macOS
-
-The automatic installer uses pip to install Quick Share from GitHub. Python 3.8+ is required.
+On the receiving computer:
 
 ```bash
-curl -fsSL https://github.com/Newbluecake/quick-share/raw/master/install.sh | bash
+quick-share receive
+# shortcut, when installed without a name conflict:
+rc
 ```
 
-Or install directly with pip:
-```bash
-pip install git+https://github.com/Newbluecake/quick-share.git
-```
-
-### Windows
-
-The installation script downloads `quick-share.exe` and adds it to your User PATH. No Python required.
-
-1. Open PowerShell.
-2. Run the following command:
-   ```powershell
-   iwr -useb https://github.com/Newbluecake/quick-share/raw/master/install.ps1 | iex
-   ```
-3. Restart your terminal to refresh the PATH.
-
-Alternatively, if you have Python installed:
-```powershell
-pip install git+https://github.com/Newbluecake/quick-share.git
-```
-
-## 💡 Usage
-
-### Basic Sharing
-Share a file with default settings (Max 10 downloads, 5 minutes timeout):
+On the sending computer:
 
 ```bash
-quick-share document.pdf
+quick-share send report.pdf photos/
+# shortcut:
+sc report.pdf photos/
 ```
 
-*Output example:*
-```text
-Sharing: document.pdf
-Size: 2.5 MB
---------------------------------------------------
-Download Link: http://192.168.1.10:8000/document.pdf
+The first unknown connection displays a six-digit SAS. Compare it on both terminals before choosing “accept and trust”. `--yes` permits one-time TOFU only; it never creates durable trust.
 
-Command for receiver:
-  wget http://192.168.1.10:8000/document.pdf
-  curl -O http://192.168.1.10:8000/document.pdf
---------------------------------------------------
-Limits: 10 downloads or 5m timeout
-Press Ctrl+C to stop sharing manually
-```
+## Commands
 
-### Custom Limits
-Share a file allowing only **3 downloads** and keep server alive for **10 minutes**:
+### Send files and directories
 
 ```bash
-quick-share data.zip -n 3 -t 10m
+quick-share send file.txt directory/
+quick-share send --peer 192.168.1.20:4242 file.txt
+quick-share send --web file.txt
+quick-share send --follow-links symlink
 ```
 
-### Custom Port
-Share using a specific port (e.g., 9090):
+Automatic Web fallback occurs **only** when discovery succeeds and finds zero compatible receivers. Discovery errors, partial scans, rejection, timeout, identity change, connection failure, and transfer failure do not fall back to Web.
+
+### Send text or clipboard content
 
 ```bash
-quick-share image.png -p 9090
+quick-share send --text 'hello from Quick Share'
+quick-share send --clipboard
 ```
 
-### Full Options
+Received text is never executed or opened. Without an explicit output file, the receiver tries the native clipboard and safely falls back to stdout.
 
-```text
-usage: quick-share [-h] [-p PORT] [-n MAX_DOWNLOADS] [-t TIMEOUT] file_path
+### Receive
 
-positional arguments:
-  file_path             Path to the file to share
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -p PORT, --port PORT  Port to listen on (1024-65535)
-  -n MAX_DOWNLOADS      Maximum number of downloads allowed (default: 10)
-  -t TIMEOUT            Timeout duration (e.g., 30s, 5m, 1h) (default: 5m)
+```bash
+quick-share receive
+quick-share receive --output ~/Downloads/received
+quick-share receive --once --yes
 ```
 
-## 🛠️ Development
+Unknown non-interactive offers are rejected unless `--yes` is supplied, and `--yes` can accept only once. The first Ctrl+C persists resumable state; a second interrupt forces termination.
 
-Instructions for building from source or contributing.
+### Traditional browser sharing
 
-### Prerequisites
-- Python 3.8+
-- pip
+```bash
+quick-share serve file.txt directory/
+quick-share serve --upload --output ~/Downloads/received
+QUICK_SHARE_UPLOAD_PASSWORD='choose-a-password' \
+  quick-share serve --upload --output ~/Downloads/received
+```
 
-### Build from Source
+Web mode uses a temporary self-signed HTTPS certificate by default. The terminal prints the actual listener, token URL, certificate fingerprint, QR code, expiration, and download limit. Browsers will warn about the temporary certificate; do not install it as a CA.
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/Newbluecake/quick-share.git
-   cd quick-share
-   ```
+Plaintext HTTP requires an explicit opt-in:
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   pip install -r requirements-dev.txt
-   ```
+```bash
+quick-share serve --allow-http file.txt
+```
 
-3. **Run tests**
-   ```bash
-   pytest
-   ```
+### Trusted devices
 
-4. **Build executable**
-   Use the provided build script to create a standalone binary:
-   ```bash
-   ./build.sh
-   ```
-   The executable will be generated in the `dist/` directory.
+```bash
+quick-share devices list
+quick-share devices list --json
+quick-share devices rename <DEVICE_ID> laptop
+quick-share devices remove <DEVICE_ID>
+```
+
+Trust is pinned to the complete authenticated static public key, not an IP address, device name, mDNS record, or short SAS.
+
+### Configuration
+
+```bash
+quick-share config show
+quick-share config path
+quick-share config set device.name workstation
+quick-share config set receive.output ~/Downloads/received
+```
+
+Configuration precedence is command line, environment, TOML file, then built-in defaults. Identity and trust state are stored separately with private permissions.
+
+### Signed self-update
+
+```bash
+quick-share update --check
+quick-share update
+quick-share update --yes
+quick-share update --version 2.0.0
+```
+
+Updates are fetched only from `Newbluecake/quick-share`, bounded while streaming, verified against the signed SHA-256 manifest and pinned Ed25519 release key, startup-checked, and replaced with rollback protection. Redirects to plaintext or foreign hosts are rejected.
+
+## Security model
+
+- Direct transfers use fixed `Noise_XX_25519_ChaChaPoly_BLAKE2s` with full static-key pinning.
+- Unknown peers may submit only a bounded offer before approval; transfer operations require short-lived, peer-bound authorization.
+- Files use BLAKE3 chunk and final integrity verification, staging, durable journals, and atomic commit.
+- Web mode uses random 128-bit access tokens, path-independent catalog IDs, canonical containment checks, strict limits, no-store/no-referrer headers, and default HTTPS.
+- Product crates forbid unsafe Rust. Dependencies are checked with RustSec and protocol framing is fuzzed in CI.
+- The release updater pins an Ed25519 public key in the binary. The private key exists only as the protected `RELEASE_SIGNING_KEY_PEM` GitHub Actions secret.
+
+See [`SECURITY.md`](SECURITY.md) for reporting issues and [`docs/migration-v2.md`](docs/migration-v2.md) for v1 migration and rollback guidance.
+
+## Build and test
+
+Requirements:
+
+- Rust 1.92.0, as pinned by `rust-toolchain.toml`
+- platform C toolchain required by Rust dependencies
+
+```bash
+git clone https://github.com/Newbluecake/quick-share.git
+cd quick-share
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --all-features --locked
+cargo build --workspace --release --locked
+```
+
+Or run:
+
+```bash
+./build.sh
+```
+
+The only product executable is `target/release/quick-share`. The installer creates aliases; Cargo does not build separate `sc` or `rc` programs.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and review requirements.
+
+## Platform notes
+
+- Discovery is link-local mDNS. For routed or multicast-restricted networks, use `--peer host:port`.
+- Quick Share never silently changes firewall or network-profile settings.
+- Windows Public-profile inbound rules may block connections; diagnostics provide guidance without modifying the system.
+- Windows subprocess output is normalized from UTF-8, UTF-16LE, or legacy GBK into internal UTF-8; PowerShell scripts explicitly select UTF-8. File contents and redirected transfer payloads are never transcoded.
+- Headless Linux clipboard access safely falls back to stdout/file output.
+- Symbolic links are transferred as links by default; `--follow-links` must be explicit.
 
 ## License
 

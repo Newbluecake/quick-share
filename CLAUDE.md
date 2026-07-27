@@ -2,13 +2,16 @@
 
 ## Version Bump Checklist
 
-发布新版本时，以下文件必须同步更新版本号：
+Quick Share 2 is a Rust-only workspace. `Cargo.toml` under `[workspace.package]` is the single version source; every product crate inherits it with `version.workspace = true`.
 
-| 文件 | 位置 | 说明 |
-|------|------|------|
-| `src/__init__.py` | `__version__ = "x.x.x"` | 运行时版本，`--version` 命令读取此处 |
-| `setup.py` | `version="x.x.x"` | pip 安装包版本 |
-| `pyproject.toml` | `version = "x.x.x"` | 现代构建配置版本 |
-| `CHANGELOG.md` | 新增版本节 | 记录变更内容 |
+When preparing a release:
 
-> **注意**：`src/__init__.py`、`setup.py` 和 `pyproject.toml` 中的版本号必须保持一致。
+| File | Location | Purpose |
+|---|---|---|
+| `Cargo.toml` | `[workspace.package].version` | The only runtime/package version |
+| `Cargo.lock` | resolved workspace packages | Regenerated and committed after the version change |
+| `CHANGELOG.md` | new release section | User-visible changes and migration notes |
+
+Do not recreate Python version files or duplicate the version in scripts. Release workflows derive the asset version from the immutable Git tag and verify that the binary reports the Cargo workspace version.
+
+A final `v2.0.0` tag requires the T-024 release acceptance approval. Do not bypass the `snow 0.10.0` security-review and macOS true-host gates.

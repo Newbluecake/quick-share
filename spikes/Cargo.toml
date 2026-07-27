@@ -1,0 +1,35 @@
+[workspace]
+members = [
+    "identity",
+    "discovery",
+    "web-tls",
+    "resume",
+    "clipboard",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+axum = "0.8"
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+blake3 = "1"
+clap = { version = "4.5", features = ["derive"] }
+hex = "0.4"
+local-ip-address = "0.6"
+mdns-sd = "0.20"
+qrcode = "0.14"
+rcgen = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+snow = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }

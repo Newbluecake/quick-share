@@ -1,0 +1,21 @@
+{
+  "protocolVersion": { "major": 1, "minor": 0 },
+  "transferId": "0193f1b8-7c5d-7a31-8db7-3f3ce4fe34ce",
+  "sender": {
+    "deviceId": "qs_0123456789abcdef0123456789abcdef",
+    "name": "fixture-linux",
+    "capabilities": ["files", "directories", "resume"]
+  },
+  "contentKind": "files",
+  "chunkSize": 4194304,
+  "totalBytes": 12,
+  "entries": [
+    {
+      "id": 1,
+      "relativePath": "docs/readme.txt",
+      "kind": "file",
+      "size": 12,
+      "digest": [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]
+    }
+  ]
+}

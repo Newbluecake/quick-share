@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Quick Share</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div class="brand-mark" aria-hidden="true">QS</div>
+      <div>
+        <p class="eyebrow">LOCAL TRANSFER</p>
+        <h1>Quick Share</h1>
+        <p class="subtitle">Files shared directly from a nearby device.</p>
+      </div>
+      <span id="connection-status" class="status">Connecting</span>
+    </header>
+
+    <section class="panel" aria-labelledby="shared-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">AVAILABLE NOW</p>
+          <h2 id="shared-heading">Shared files</h2>
+        </div>
+        <a id="download-all" class="button button--primary" href="#">Download all</a>
+      </div>
+      <div id="catalog" class="catalog" aria-live="polite">
+        <p class="empty-state">Loading secure catalog…</p>
+      </div>
+    </section>
+
+    <section id="upload-panel" class="panel upload-panel" aria-labelledby="upload-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">SEND BACK</p>
+          <h2 id="upload-heading">Upload files</h2>
+        </div>
+      </div>
+      <label id="drop-zone" class="drop-zone" for="file-input">
+        <span class="drop-zone__icon" aria-hidden="true">↑</span>
+        <strong>Drop files here</strong>
+        <span>or choose files from this device</span>
+        <input id="file-input" type="file" multiple>
+      </label>
+      <label id="upload-password-field" class="password-field" for="upload-password" hidden>
+        <span>Upload password, if required</span>
+        <input id="upload-password" type="password" autocomplete="off">
+      </label>
+      <div id="upload-progress" class="upload-progress" aria-live="polite"></div>
+    </section>
+
+    <footer>Encrypted in transit when the address starts with HTTPS. Keep the access link private.</footer>
+  </main>
+</body>
+</html>
