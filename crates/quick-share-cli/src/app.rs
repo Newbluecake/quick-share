@@ -646,21 +646,54 @@ impl DirectSendAdapter for ProductionDirect {
                     *follow_links,
                     sender_info,
                     self.config.transfer.chunk_size,
+                    request.resume_transfer_id,
                 )?;
-                let token = transport.create_offer(offer).await.map_err(map_direct)?;
-                sender
-                    .send(plan, &token, CancellationToken::new(), Some(progress_tx))
+                print_transfer_resume_hint(plan.transfer_id, request.resume_transfer_id.is_some());
+                let token = if request.resume_transfer_id.is_some() {
+                    transport.resume_offer(offer).await
+                } else {
+                    transport.create_offer(offer).await
+                }
+                .map_err(map_direct)?;
+                if let Err(error) = sender
+                    .send(
+                        plan.clone(),
+                        &token,
+                        CancellationToken::new(),
+                        Some(progress_tx),
+                    )
                     .await
-                    .map_err(map_sender)?;
+                {
+                    print_retryable_resume_hint(plan.transfer_id, &error);
+                    return Err(map_sender(error));
+                }
             }
             SendContent::Text(payload) => {
-                let (offer, plan) =
-                    prepare_text_transfer(payload, sender_info, self.config.transfer.chunk_size)?;
-                let token = transport.create_offer(offer).await.map_err(map_direct)?;
-                sender
-                    .send_text(plan, &token, CancellationToken::new(), Some(progress_tx))
+                let (offer, plan) = prepare_text_transfer(
+                    payload,
+                    sender_info,
+                    self.config.transfer.chunk_size,
+                    request.resume_transfer_id,
+                )?;
+                print_transfer_resume_hint(plan.transfer_id, request.resume_transfer_id.is_some());
+                let token = if request.resume_transfer_id.is_some() {
+                    transport.resume_offer(offer).await
+                } else {
+                    transport.create_offer(offer).await
+                }
+                .map_err(map_direct)?;
+                if let Err(error) = sender
+                    .send_text(
+                        plan.clone(),
+                        &token,
+                        CancellationToken::new(),
+                        Some(progress_tx),
+                    )
                     .await
-                    .map_err(map_sender)?;
+                {
+                    print_retryable_resume_hint(plan.transfer_id, &error);
+                    return Err(map_sender(error));
+                }
             }
         }
         progress_task
@@ -674,11 +707,39 @@ fn quick_share_cli_progress(terminal: ConsoleTerminal, event: ProgressEvent) {
     terminal.progress(event);
 }
 
+fn print_transfer_resume_hint(transfer_id: TransferId, resumed: bool) {
+    if resumed {
+        eprintln!("Resuming transfer {}.", transfer_id.as_uuid());
+    } else {
+        eprintln!("Transfer ID: {}", transfer_id.as_uuid());
+    }
+}
+
+fn print_retryable_resume_hint(
+    transfer_id: TransferId,
+    error: &quick_share_transfer::sender::SenderError,
+) {
+    if matches!(
+        error,
+        quick_share_transfer::sender::SenderError::Transport(
+            quick_share_transfer::sender::TransportError::Retryable
+                | quick_share_transfer::sender::TransportError::Unauthorized
+        )
+    ) {
+        eprintln!(
+            "Transfer {} remains resumable. Re-run the same send command with --resume {}.",
+            transfer_id.as_uuid(),
+            transfer_id.as_uuid()
+        );
+    }
+}
+
 fn prepare_path_transfer(
     paths: &[PathBuf],
     follow_links: bool,
     sender: DeviceInfo,
     chunk_size: u32,
+    resume_transfer_id: Option<TransferId>,
 ) -> Result<(TransferOffer, TransferPlan), AppError> {
     let manifest = ManifestBuilder::new()
         .follow_links(follow_links)
@@ -708,7 +769,7 @@ fn prepare_path_transfer(
             digest: prepared.get(&entry.id).map(|file| file.final_digest),
         })
         .collect::<Vec<_>>();
-    let transfer_id = TransferId::new(Uuid::now_v7());
+    let transfer_id = resume_transfer_id.unwrap_or_else(|| TransferId::new(Uuid::now_v7()));
     let offer = TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id,
@@ -736,8 +797,9 @@ fn prepare_text_transfer(
     payload: &quick_share_transfer::text::TextPayload,
     sender: DeviceInfo,
     chunk_size: u32,
+    resume_transfer_id: Option<TransferId>,
 ) -> Result<(TransferOffer, TextSendPlan), AppError> {
-    let transfer_id = TransferId::new(Uuid::now_v7());
+    let transfer_id = resume_transfer_id.unwrap_or_else(|| TransferId::new(Uuid::now_v7()));
     let entry_id = EntryId::new(1)
         .ok_or_else(|| AppError::Usage("text entry ID must be non-zero".to_owned()))?;
     let media_type = match payload.source() {

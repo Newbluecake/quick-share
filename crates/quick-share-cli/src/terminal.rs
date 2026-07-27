@@ -216,12 +216,19 @@ impl ReceiveTerminal for ConsoleTerminal {
                 "unknown / TOFU until SAS is compared"
             }
         );
-        for entry in &view.entries {
+        const MAX_DISPLAYED_OFFER_ENTRIES: usize = 100;
+        for entry in view.entries.iter().take(MAX_DISPLAYED_OFFER_ENTRIES) {
             eprintln!(
                 "    {}  {}  {} bytes",
                 entry.kind,
                 terminal_safe(&entry.relative_path),
                 entry.size
+            );
+        }
+        if view.entries.len() > MAX_DISPLAYED_OFFER_ENTRIES {
+            eprintln!(
+                "    ... {} additional entries omitted from terminal display",
+                view.entries.len() - MAX_DISPLAYED_OFFER_ENTRIES
             );
         }
     }

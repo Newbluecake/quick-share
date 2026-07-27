@@ -542,7 +542,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_manifest_accepts_exactly_ten_thousand_entries() {
+    fn production_manifest_enforces_the_twenty_thousand_entry_bound() {
         let root = tempfile::tempdir().expect("temporary root");
         let source = root.path().join("source");
         fs::write(&source, b"").expect("source file");

@@ -13,12 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Offline responsive Web UI with secure catalog IDs, streaming downloads and Range requests, browser uploads, ZIP, QR codes, download quotas, timeout shutdown, default self-signed HTTPS, user certificates, and explicit HTTP opt-in.
 - Linux/macOS Shell and Windows PowerShell installers with fixed-origin downloads, SHA-256 verification, pinned Ed25519 release signatures where supported, atomic replacement, rollback, and shortcut no-clobber behavior.
 - Cross-platform Rust release pipeline producing native binaries, archives, SPDX SBOMs, `SHA256SUMS`, `SHA256SUMS.sig`, GitHub build provenance, and released-binary loopback smoke tests.
+- Explicit `send --resume TRANSFER_ID` recovery across sender and receiver process restarts, bound to the authenticated static identity and exact original manifest.
 
 ### Changed
 - Replaced the Python HTTP peer/shared-secret design with an incompatible QSP/1 Noise protocol and platform-standard TOML/identity/trust state.
 - Automatic Web fallback now occurs only after a successful discovery scan finds zero compatible receivers.
 - Cargo workspace metadata is the only version source. The current development version is `2.0.0-alpha.0`; final `2.0.0` remains gated by cross-platform acceptance.
 - Windows subprocess text is normalized from UTF-8, UTF-16LE, or legacy GBK into internal UTF-8; file payload bytes are never transcoded.
+- Small-file transfer uses TCP_NODELAY, bounded append-only chunk checkpoints and batched final commits, avoiding quadratic journal rewrites while preserving fail-closed recovery.
 
 ### Removed
 - Python, pip, PyInstaller, `setup.py`, `pyproject.toml`, requirements files, and the legacy Python runtime/test suite.
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Update packages are accepted only from the fixed `Newbluecake/quick-share` release origin after bounded download, signed-manifest verification, startup checking, and rollback-capable replacement.
 - Web mode defaults to HTTPS and uses random bearer URLs, strict response headers, path-independent catalog IDs, canonical containment, bounded multipart parsing, and no-clobber staging.
+- Trail of Bits' independent `snow` assessment and fix review were mapped to locked `snow 0.10.0`; all medium/low findings are fixed, with the remaining local-root memory-zeroization risk documented.
 
 See `docs/migration-v2.md` for command changes, configuration migration, and rollback.
 

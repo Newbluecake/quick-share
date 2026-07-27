@@ -103,6 +103,9 @@ struct SendArgs {
     /// Skip discovery and use traditional Web sharing.
     #[arg(long, conflicts_with = "peer")]
     web: bool,
+    /// Resume an interrupted transfer with the exact same content and transfer UUID.
+    #[arg(long, value_name = "TRANSFER_ID", conflicts_with = "web")]
+    resume: Option<String>,
     /// Follow source symbolic links instead of preserving link metadata.
     #[arg(long)]
     follow_links: bool,
@@ -298,6 +301,7 @@ pub struct SendIntent {
     pub clipboard: bool,
     pub peer: Option<String>,
     pub web: bool,
+    pub resume: Option<String>,
     pub follow_links: bool,
     pub allow_http: bool,
     pub assume_yes: bool,
@@ -435,6 +439,7 @@ impl From<Cli> for CommandIntent {
                 clipboard: args.clipboard,
                 peer: args.peer,
                 web: args.web,
+                resume: args.resume,
                 follow_links: args.follow_links,
                 allow_http: args.allow_http,
                 assume_yes: args.yes,

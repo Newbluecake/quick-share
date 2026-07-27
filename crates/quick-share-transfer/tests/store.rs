@@ -86,7 +86,7 @@ fn final_path_is_hidden_until_all_chunks_and_full_digest_are_verified() {
 }
 
 #[test]
-fn every_chunk_boundary_is_a_durable_resume_point() {
+fn completed_chunk_boundary_is_recoverable_after_restart() {
     let payload = vec![0x6b; CHUNK_SIZE as usize * 2 + 17];
     let chunks = payload.chunks(CHUNK_SIZE as usize).collect::<Vec<_>>();
     for boundary in 0..=chunks.len() {
@@ -319,6 +319,68 @@ fn journal_ordering_recovers_faults_before_and_after_state_replace() {
             .expect("missing")
             .is_empty()
     );
+}
+
+#[test]
+fn small_file_chunk_log_and_batch_commit_scale_without_losing_restart_state() {
+    let root = tempdir().expect("output root");
+    let id = transfer_id();
+    let files = (1..=256_u32)
+        .map(|raw| {
+            let entry_id = EntryId::new(raw).expect("entry ID");
+            let bytes = [(raw % 251) as u8];
+            StagedFile::new(
+                entry_id,
+                RelativePath::parse(format!("small-{raw:03}.bin")).expect("relative"),
+                1,
+                CHUNK_SIZE,
+                digest(&bytes),
+            )
+            .expect("small file")
+        })
+        .collect::<Vec<_>>();
+    let mut store = TransferStore::create(root.path(), id, sender_id(), files).expect("store");
+    for raw in 1..=256_u32 {
+        let entry_id = EntryId::new(raw).expect("entry ID");
+        let bytes = [(raw % 251) as u8];
+        store
+            .write_chunk(
+                entry_id,
+                &ChunkDescriptor {
+                    transfer_id: id,
+                    entry_id,
+                    index: 0,
+                    offset: 0,
+                    length: 1,
+                    digest: digest(&bytes),
+                },
+                &bytes,
+                FaultPoint::None,
+            )
+            .expect("small chunk");
+    }
+    drop(store);
+
+    let mut reopened = TransferStore::reopen(root.path(), id, &sender_id()).expect("reopen");
+    let entries = (1..=256_u32)
+        .map(|raw| EntryId::new(raw).expect("entry ID"))
+        .collect::<Vec<_>>();
+    assert!(entries.iter().all(|entry_id| {
+        reopened
+            .missing_chunks(*entry_id)
+            .expect("missing")
+            .is_empty()
+    }));
+    let outcomes = reopened
+        .commit_files_batch(&entries, ConflictPolicy::Error)
+        .expect("batch commit");
+    assert_eq!(outcomes.len(), entries.len());
+    for raw in 1..=256_u32 {
+        assert_eq!(
+            fs::read(root.path().join(format!("small-{raw:03}.bin"))).expect("committed"),
+            [(raw % 251) as u8]
+        );
+    }
 }
 
 #[test]

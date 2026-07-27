@@ -2,10 +2,10 @@ use proptest::prelude::*;
 use quick_share_protocol::{
     AuthorizationProof, Capability, ChunkData, ChunkDescriptor, ContentKind, DecodeError, DeviceId,
     DeviceInfo, EntryId, EntryTransferStatus, ErrorCode, InfoRequest, InfoResponse,
-    MAX_CHUNK_FRAME_BYTES, ManifestEntry, ManifestEntryKind, MessageType, MissingChunkBitmap,
-    OfferCreate, OfferDecision, OfferStatusRequest, OfferStatusResponse, ProtocolError,
-    ProtocolVersion, RejectionReason, TransferComplete, TransferId, TransferOffer, TransferStatus,
-    TransferStatusResponse, ValidationError, decode_offer, negotiate,
+    MAX_CHUNK_FRAME_BYTES, MAX_MANIFEST_ENTRIES, ManifestEntry, ManifestEntryKind, MessageType,
+    MissingChunkBitmap, OfferCreate, OfferDecision, OfferStatusRequest, OfferStatusResponse,
+    ProtocolError, ProtocolVersion, RejectionReason, TransferComplete, TransferId, TransferOffer,
+    TransferStatus, TransferStatusResponse, ValidationError, decode_offer, negotiate,
 };
 use std::collections::BTreeSet;
 use uuid::Uuid;
@@ -102,9 +102,9 @@ fn validation_rejects_oversized_device_names_and_manifests() {
     let mut wrong_content_kind = valid_offer();
     wrong_content_kind.content_kind = ContentKind::Text;
     let mut too_many_entries = valid_offer();
-    too_many_entries.entries = (1..=10_001)
+    too_many_entries.entries = (1..=MAX_MANIFEST_ENTRIES + 1)
         .map(|id| ManifestEntry {
-            id: EntryId::new(id).expect("valid ID"),
+            id: EntryId::new(u32::try_from(id).expect("valid ID")).expect("valid ID"),
             relative_path: format!("file-{id}"),
             kind: ManifestEntryKind::File,
             size: 0,
@@ -221,7 +221,13 @@ fn info_and_offer_control_types_are_strict_and_message_codes_are_stable() {
     };
     let create = OfferCreate {
         offer: offer.clone(),
+        resume: false,
     };
+    let legacy_create: OfferCreate = serde_json::from_value(serde_json::json!({
+        "offer": offer.clone()
+    }))
+    .expect("legacy create defaults to a fresh offer");
+    assert!(!legacy_create.resume);
     let status_request = OfferStatusRequest {
         transfer_id: offer.transfer_id,
     };

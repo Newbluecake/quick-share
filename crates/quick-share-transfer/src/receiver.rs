@@ -1,8 +1,7 @@
 //! Authorized, resumable receiver state machine over already-authenticated Noise frames.
 
 use crate::{
-    ChunkBegin, ChunkUpload, CommitOutcome, FaultPoint, MetadataState, StagedFile, StoreError,
-    TransferStore,
+    ChunkBegin, ChunkUpload, CommitOutcome, MetadataState, StagedFile, StoreError, TransferStore,
     offer::{
         AuthorizationPermission, AuthorizationToken, AuthorizedOffer, OfferError, OfferManager,
     },
@@ -232,9 +231,11 @@ impl ReceiverService {
                     }));
                 }
                 ChunkBegin::Upload(upload) => {
-                    transfer
-                        .store
-                        .set_transfer_status(TransferStatus::Transferring)?;
+                    if transfer.store.transfer_status() != TransferStatus::Transferring {
+                        transfer
+                            .store
+                            .set_transfer_status(TransferStatus::Transferring)?;
+                    }
                     transfer.upload_keys.insert(key);
                     transfer.uploads.insert(request_id, *upload);
                 }
@@ -331,36 +332,29 @@ impl ReceiverService {
             .set_transfer_status(TransferStatus::Verifying)?;
 
         let result = (|| -> Result<Option<TextPayload>, ReceiverError> {
-            let mut directories: Vec<_> = transfer
+            let mut directories = transfer
                 .offer
                 .entries
                 .iter()
                 .filter(|entry| matches!(entry.kind, ManifestEntryKind::Directory))
-                .collect();
-            directories.sort_by_key(|entry| entry.relative_path.matches('/').count());
-            for entry in directories {
-                self.commit_directory(
-                    &mut transfer.store,
-                    entry.id,
-                    &RelativePath::parse(&entry.relative_path)?,
-                )?;
-            }
+                .map(|entry| Ok((entry.id, RelativePath::parse(&entry.relative_path)?)))
+                .collect::<Result<Vec<_>, ReceiverError>>()?;
+            directories.sort_by_key(|(_, path)| path.as_str().matches('/').count());
+            self.commit_directories_batch(&mut transfer.store, &directories)?;
             let mut completed_text = None;
+            let mut file_entries = Vec::new();
             for entry in &transfer.offer.entries {
                 match entry.kind {
-                    ManifestEntryKind::File => {
-                        let _outcome: CommitOutcome = transfer.store.commit_file(
-                            entry.id,
-                            self.policy.conflict,
-                            FaultPoint::None,
-                        )?;
-                    }
+                    ManifestEntryKind::File => file_entries.push(entry.id),
                     ManifestEntryKind::Text { .. } => {
                         completed_text = load_text_payload(&mut transfer.store, &transfer.offer)?;
                     }
                     ManifestEntryKind::Directory | ManifestEntryKind::Symlink { .. } => {}
                 }
             }
+            let _outcomes: Vec<CommitOutcome> = transfer
+                .store
+                .commit_files_batch(&file_entries, self.policy.conflict)?;
             for entry in &transfer.offer.entries {
                 if let ManifestEntryKind::Symlink { target } = &entry.kind {
                     self.commit_symlink(
@@ -572,7 +566,8 @@ impl ReceiverService {
             store.register_metadata(&metadata_entries)?;
             let received_bytes = received_bytes(&store, &authorized.offer)?;
             let cancellation = CancellationToken::new();
-            if store.transfer_status() == TransferStatus::Cancelled {
+            let last_reported_status = store.transfer_status();
+            if last_reported_status == TransferStatus::Cancelled {
                 cancellation.cancel();
             }
             state.transfers.insert(
@@ -585,6 +580,8 @@ impl ReceiverService {
                     uploads: BTreeMap::new(),
                     upload_keys: BTreeSet::new(),
                     received_bytes,
+                    last_reported_bytes: received_bytes,
+                    last_reported_status,
                     cancellation,
                     completed_text: None,
                 },
@@ -610,45 +607,58 @@ impl ReceiverService {
             .authorize(&token, peer, transfer_id, permission, now)?)
     }
 
-    fn commit_directory(
+    fn commit_directories_batch(
         &self,
         store: &mut TransferStore,
-        entry_id: quick_share_protocol::EntryId,
-        requested: &RelativePath,
+        directories: &[(quick_share_protocol::EntryId, RelativePath)],
     ) -> Result<(), ReceiverError> {
-        let relative = match store.metadata_state(entry_id)? {
-            MetadataState::Committed { .. } | MetadataState::Skipped => return Ok(()),
-            MetadataState::Committing { destination } => destination,
-            MetadataState::Pending => {
-                let destination = requested.resolve_under(&self.output_root);
-                match resolve_destination(&self.output_root, requested, ConflictPolicy::Error) {
-                    Ok(_) => {}
-                    Err(PathError::DestinationExists(_)) if destination.is_dir() => {
-                        if fs::symlink_metadata(&destination)?.file_type().is_symlink() {
-                            return Err(PathError::SymlinkAncestor(destination).into());
+        let mut intents = Vec::new();
+        let mut plans = Vec::new();
+        for (entry_id, requested) in directories {
+            let relative = match store.metadata_state(*entry_id)? {
+                MetadataState::Committed { .. } | MetadataState::Skipped => continue,
+                MetadataState::Committing { destination } => destination,
+                MetadataState::Pending => {
+                    let destination = requested.resolve_under(&self.output_root);
+                    match resolve_destination(&self.output_root, requested, ConflictPolicy::Error) {
+                        Ok(_) => {}
+                        Err(PathError::DestinationExists(_)) if destination.is_dir() => {
+                            if fs::symlink_metadata(&destination)?.file_type().is_symlink() {
+                                return Err(PathError::SymlinkAncestor(destination).into());
+                            }
                         }
+                        Err(error) => return Err(error.into()),
                     }
-                    Err(error) => return Err(error.into()),
+                    intents.push((*entry_id, requested.clone()));
+                    requested.clone()
                 }
-                store.begin_metadata_commit(entry_id, requested)?;
-                requested.clone()
-            }
-        };
-        let destination = relative.resolve_under(&self.output_root);
-        match fs::symlink_metadata(&destination) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(PathError::SymlinkAncestor(destination).into());
-            }
-            Ok(metadata) if !metadata.is_dir() => {
-                return Err(PathError::NonDirectoryAncestor(destination).into());
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                self.output_dir.create_dir_all(relative.as_str())?;
-            }
-            Err(error) => return Err(error.into()),
+            };
+            plans.push((*entry_id, relative));
         }
-        store.finish_metadata_commit(entry_id, false)?;
+        if !intents.is_empty() {
+            store.begin_metadata_batch(&intents)?;
+        }
+        let mut completed = Vec::with_capacity(plans.len());
+        for (entry_id, relative) in plans {
+            let destination = relative.resolve_under(&self.output_root);
+            match fs::symlink_metadata(&destination) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(PathError::SymlinkAncestor(destination).into());
+                }
+                Ok(metadata) if !metadata.is_dir() => {
+                    return Err(PathError::NonDirectoryAncestor(destination).into());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    self.output_dir.create_dir_all(relative.as_str())?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+            completed.push(entry_id);
+        }
+        if !completed.is_empty() {
+            store.finish_metadata_batch(&completed)?;
+        }
         Ok(())
     }
 
@@ -754,13 +764,26 @@ impl ReceiverService {
             .ok_or(ReceiverError::NotFound)
     }
 
-    fn emit_progress(&self, transfer: &ActiveTransfer) {
+    fn emit_progress(&self, transfer: &mut ActiveTransfer) {
+        let status = transfer.store.transfer_status();
+        let step = (transfer.offer.total_bytes / 100).max(1);
+        if status == transfer.last_reported_status
+            && transfer.received_bytes != transfer.offer.total_bytes
+            && transfer
+                .received_bytes
+                .saturating_sub(transfer.last_reported_bytes)
+                < step
+        {
+            return;
+        }
+        transfer.last_reported_bytes = transfer.received_bytes;
+        transfer.last_reported_status = status;
         if let Some(progress) = &self.progress {
             let _ = progress.try_send(ReceiverProgressEvent {
                 transfer_id: transfer.offer.transfer_id,
                 received_bytes: transfer.received_bytes,
                 total_bytes: transfer.offer.total_bytes,
-                status: transfer.store.transfer_status(),
+                status,
             });
         }
     }
@@ -783,6 +806,8 @@ struct ActiveTransfer {
     uploads: BTreeMap<RequestId, ChunkUpload>,
     upload_keys: BTreeSet<(quick_share_protocol::EntryId, u32)>,
     received_bytes: u64,
+    last_reported_bytes: u64,
+    last_reported_status: TransferStatus,
     cancellation: CancellationToken,
     completed_text: Option<TextPayload>,
 }

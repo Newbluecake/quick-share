@@ -288,7 +288,9 @@ pub enum TransportError {
     Integrity,
     #[error("remote rejected authorization")]
     Unauthorized,
-    #[error("remote resource limit was reached")]
+    #[error(
+        "remote resource limit was reached; check receiver disk space, output permissions, and concurrency limits"
+    )]
     ResourceLimit,
 }
 
@@ -987,6 +989,7 @@ struct ProgressTracker {
 struct ProgressState {
     current: u64,
     uploaded_chunks: u64,
+    last_emitted_bytes: u64,
 }
 
 impl ProgressTracker {
@@ -998,6 +1001,7 @@ impl ProgressTracker {
             state: Mutex::new(ProgressState {
                 current,
                 uploaded_chunks: 0,
+                last_emitted_bytes: current,
             }),
             sender,
         }
@@ -1007,7 +1011,13 @@ impl ProgressTracker {
         if let Ok(mut state) = self.state.lock() {
             state.current = state.current.saturating_add(bytes).min(self.total);
             state.uploaded_chunks += 1;
-            self.try_emit(&state);
+            let step = (self.total / 100).max(1);
+            if state.current == self.total
+                || state.current.saturating_sub(state.last_emitted_bytes) >= step
+            {
+                state.last_emitted_bytes = state.current;
+                self.try_emit(&state);
+            }
         }
     }
 

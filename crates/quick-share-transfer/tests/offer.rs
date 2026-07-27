@@ -166,6 +166,78 @@ async fn accept_once_grant_binds_token_peer_transfer_permission_expiry_and_manif
 }
 
 #[tokio::test]
+async fn explicit_resume_reauthorizes_only_the_identical_accepted_offer() {
+    let root = tempdir().expect("root");
+    let local = IdentityStore::new(root.path().join("local.json"))
+        .load_or_create()
+        .expect("local");
+    let remote = IdentityStore::new(root.path().join("remote.json"))
+        .load_or_create()
+        .expect("remote");
+    let trust = TrustedDeviceStore::new(root.path().join("trusted.toml"));
+    let peer = context(&local, &remote, "sender", &trust);
+    let manager = OfferManager::new(trust, OfferPolicy::default());
+    let transfer_id = id();
+    let original = offer(&peer, transfer_id, 12);
+    let now = Instant::now();
+    let submission = manager
+        .create_offer(&peer, None, original.clone(), now)
+        .expect("offer");
+    manager
+        .decide(transfer_id, OfferDecision::AcceptOnce, false, now)
+        .expect("accept");
+    let original_token = submission
+        .resolution
+        .await
+        .expect("resolution")
+        .authorization
+        .expect("token");
+
+    let resumed = manager
+        .resume_offer(&peer, None, original.clone(), now + Duration::from_secs(1))
+        .expect("resume");
+    let resumed_token = resumed
+        .resolution
+        .await
+        .expect("resume resolution")
+        .authorization
+        .expect("resume token");
+    assert_ne!(
+        original_token.with_bytes(|bytes| *bytes),
+        resumed_token.with_bytes(|bytes| *bytes)
+    );
+    assert!(
+        manager
+            .authorize(
+                &resumed_token,
+                peer.device_id(),
+                transfer_id,
+                AuthorizationPermission::ChunkUpload,
+                now + Duration::from_secs(1),
+            )
+            .is_ok()
+    );
+    assert!(
+        manager
+            .authorize(
+                &original_token,
+                peer.device_id(),
+                transfer_id,
+                AuthorizationPermission::ChunkUpload,
+                now + Duration::from_secs(1),
+            )
+            .is_err()
+    );
+
+    let mut changed = original;
+    changed.entries[0].digest = Some([9; 32]);
+    assert!(matches!(
+        manager.resume_offer(&peer, None, changed, now + Duration::from_secs(2)),
+        Err(OfferError::ResumeMismatch)
+    ));
+}
+
+#[tokio::test]
 async fn accept_and_trust_requires_sas_and_atomically_pins_authenticated_key() {
     let root = tempdir().expect("root");
     let local = IdentityStore::new(root.path().join("local.json"))

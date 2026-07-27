@@ -14,7 +14,8 @@ pub const PROTOCOL_MAJOR: u16 = 1;
 /// Maximum accepted Unicode scalar count in a display device name.
 pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 /// Maximum entries accepted in one transfer offer.
-pub const MAX_MANIFEST_ENTRIES: usize = 10_000;
+/// Allows 10,000 files plus bounded directory/symlink metadata overhead.
+pub const MAX_MANIFEST_ENTRIES: usize = 20_000;
 /// Maximum UTF-8 bytes accepted in one relative path.
 pub const MAX_RELATIVE_PATH_BYTES: usize = 4_096;
 /// Maximum serialized offer size.
@@ -667,6 +668,9 @@ impl TransferOffer {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OfferCreate {
     pub offer: TransferOffer,
+    /// Explicitly re-authorizes an identical interrupted transfer.
+    #[serde(default)]
+    pub resume: bool,
 }
 
 impl OfferCreate {

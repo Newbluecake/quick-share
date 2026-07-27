@@ -11,6 +11,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets --all-features --locked
 cargo audit
+cargo deny check licenses sources
 ```
 
 The product has one binary target: `quick-share`. The workspace crates separate CLI, core, protocol, discovery, transfer, Web, platform, and update responsibilities.

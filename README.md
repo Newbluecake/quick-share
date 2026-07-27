@@ -64,6 +64,7 @@ The first unknown connection displays a six-digit SAS. Compare it on both termin
 ```bash
 quick-share send file.txt directory/
 quick-share send --peer 192.168.1.20:4242 file.txt
+quick-share send --resume 018f47b4-5b3a-7c9d-8123-0123456789ab --peer 192.168.1.20:4242 file.txt
 quick-share send --web file.txt
 quick-share send --follow-links symlink
 ```
@@ -179,8 +180,10 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and review requirements
 ## Platform notes
 
 - Discovery is link-local mDNS. For routed or multicast-restricted networks, use `--peer host:port`.
+- Current macOS artifacts are unsigned and not notarized because the project has no Apple Developer account; Gatekeeper may require an explicit user override. This does not weaken the Ed25519 release-manifest verification.
 - Quick Share never silently changes firewall or network-profile settings.
 - Windows Public-profile inbound rules may block connections; diagnostics provide guidance without modifying the system.
+- Every direct send prints a transfer UUID. After an interrupted sender or receiver process, rerun the same content and target with `--resume UUID`; the receiver accepts only the exact authenticated sender and immutable manifest, then requests missing chunks.
 - Windows subprocess output is normalized from UTF-8, UTF-16LE, or legacy GBK into internal UTF-8; PowerShell scripts explicitly select UTF-8. File contents and redirected transfer payloads are never transcoded.
 - Headless Linux clipboard access safely falls back to stdout/file output.
 - Symbolic links are transferred as links by default; `--follow-links` must be explicit.

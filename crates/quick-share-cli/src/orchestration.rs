@@ -4,7 +4,7 @@ use crate::{AppError, InteractionPolicy, ReceiveIntent, SendIntent};
 use async_trait::async_trait;
 use quick_share_discovery::{Discovery, ScanRequest, UnverifiedPeer};
 use quick_share_platform::clipboard::Clipboard;
-use quick_share_protocol::{DeviceId, OfferDecision, RejectionReason};
+use quick_share_protocol::{DeviceId, OfferDecision, RejectionReason, TransferId};
 use quick_share_transfer::{
     offer::OfferView,
     sender::ProgressEvent,
@@ -40,6 +40,7 @@ pub enum SendRoute {
 pub struct SendRequest {
     pub content: SendContent,
     pub route: SendRoute,
+    pub resume_transfer_id: Option<TransferId>,
     pub allow_http: bool,
     pub assume_yes: bool,
 }
@@ -131,6 +132,12 @@ where
             self.terminal.warning(warning);
         }
         if result.is_definitive_empty() {
+            if request.resume_transfer_id.is_some() {
+                return Err(AppError::PeerUnavailable(
+                    "the interrupted receiver was not discovered; resume never falls back to Web sharing"
+                        .to_owned(),
+                ));
+            }
             return self.run_web(request).await;
         }
         if result.peers.is_empty() {
@@ -198,9 +205,17 @@ pub fn prepare_send_request(
     } else {
         SendRoute::Auto
     };
+    let resume_transfer_id = intent
+        .resume
+        .as_deref()
+        .map(uuid::Uuid::parse_str)
+        .transpose()
+        .map_err(|error| AppError::Usage(format!("invalid resume transfer ID: {error}")))?
+        .map(TransferId::new);
     Ok(SendRequest {
         content,
         route,
+        resume_transfer_id,
         allow_http: intent.allow_http,
         assume_yes: intent.assume_yes,
     })

@@ -30,6 +30,11 @@ jobs:
         run: cargo test --workspace --locked
       - name: Verify pinned release public key copies
         run: scripts/release/check-signing-key.sh
+      - name: Audit dependency licenses and sources
+        uses: EmbarkStudios/cargo-deny-action@b66acf5e9fe20f8aba065be86778a8a4c846f902 # v2
+        with:
+          command: check
+          command-arguments: licenses sources
 
   rust-platform-check:
     name: Rust test (${{ matrix.os }})

@@ -43,6 +43,36 @@ fn argv_zero_shortcuts_inject_send_and_receive_commands() {
 }
 
 #[test]
+fn explicit_resume_id_is_direct_only_and_preserved_in_the_intent() {
+    let transfer_id = "018f47b4-5b3a-7c9d-8123-0123456789ab";
+    let intent = parse_intent_from([
+        "quick-share",
+        "send",
+        "--resume",
+        transfer_id,
+        "--peer",
+        "127.0.0.1:4242",
+        "file.txt",
+    ])
+    .expect("resume command");
+    let IntentCommand::Send(send) = intent.command else {
+        panic!("send intent");
+    };
+    assert_eq!(send.resume.as_deref(), Some(transfer_id));
+    assert!(
+        parse_intent_from([
+            "quick-share",
+            "send",
+            "--resume",
+            transfer_id,
+            "--web",
+            "file.txt",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
 fn send_mode_and_content_conflicts_are_rejected_by_the_parser() {
     for arguments in [
         vec![

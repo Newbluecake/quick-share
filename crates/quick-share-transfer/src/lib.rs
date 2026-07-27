@@ -25,7 +25,7 @@ use std::{
     collections::BTreeSet,
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -34,6 +34,11 @@ const STORE_VERSION: u8 = 1;
 const STAGING_DIRECTORY: &str = ".quick-share-staging";
 const MAX_TOTAL_CHUNKS: u64 = 1_000_000;
 const MAX_STATE_BYTES: u64 = 128 * 1024 * 1024;
+const CHUNK_LOG_NAME: &str = "chunks.log";
+const CHUNK_RECORD_BYTES: u64 = 40;
+const MAX_CHUNK_LOG_BYTES: u64 = MAX_TOTAL_CHUNKS * CHUNK_RECORD_BYTES;
+const SMALL_CHUNK_DURABILITY_BYTES: u32 = 64 * 1024;
+const SMALL_CHUNK_SYNC_BATCH: u32 = 256;
 
 /// One regular file accepted into receiver staging.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +123,7 @@ pub struct TransferStore {
     staging_path: PathBuf,
     manifest: StoreManifest,
     journal: ResumeJournal,
+    pending_small_chunk_records: u32,
 }
 
 /// Entry-scoped bounded offset writer backed by a `TransferStore` journal.
@@ -259,8 +265,8 @@ impl TransferStore {
                 .create_new(true)
                 .open(part_path)?;
             part.set_len(file.size)?;
-            part.sync_all()?;
         }
+        sync_directory(&files_path)?;
         save_json(staging_path.join("state.json"), &journal)?;
         let output_dir = Dir::open_ambient_dir(&output_root, ambient_authority())?;
         Ok(Self {
@@ -269,6 +275,7 @@ impl TransferStore {
             staging_path,
             manifest,
             journal,
+            pending_small_chunk_records: 0,
         })
     }
 
@@ -329,7 +336,9 @@ impl TransferStore {
             staging_path,
             manifest,
             journal,
+            pending_small_chunk_records: 0,
         };
+        store.replay_chunk_log()?;
         store.reconcile_commit_intents()?;
         Ok(store)
     }
@@ -391,7 +400,10 @@ impl TransferStore {
                 index: upload.descriptor.index,
             });
         }
-        upload.file.sync_data()?;
+        let durable_now = upload.descriptor.length > SMALL_CHUNK_DURABILITY_BYTES;
+        if durable_now {
+            upload.file.sync_data()?;
+        }
         let state_index = self.state_index(upload.descriptor.entry_id)?;
         let chunk_index = upload.descriptor.index as usize;
         if let Some(recorded) = &self.journal.entries[state_index].completed[chunk_index] {
@@ -404,11 +416,13 @@ impl TransferStore {
                 })
             };
         }
+        self.append_chunk_record(
+            upload.descriptor.entry_id,
+            upload.descriptor.index,
+            actual,
+            durable_now,
+        )?;
         self.journal.entries[state_index].completed[chunk_index] = Some(hex::encode(actual));
-        if let Err(error) = self.save_journal() {
-            self.journal.entries[state_index].completed[chunk_index] = None;
-            return Err(error);
-        }
         Ok(())
     }
 
@@ -464,20 +478,19 @@ impl TransferStore {
             .write(true)
             .open(self.part_path(entry_id))?;
         write_all_at(&part, descriptor.offset, bytes)?;
-        part.sync_data()?;
+        let durable_now = descriptor.length > SMALL_CHUNK_DURABILITY_BYTES;
+        if durable_now {
+            part.sync_data()?;
+        }
         if fault == FaultPoint::AfterDataSync {
             return Err(StoreError::InjectedFault(fault));
         }
 
-        self.journal.entries[state_index].completed[chunk_index] = Some(hex::encode(actual));
         if fault == FaultPoint::BeforeJournalReplace {
-            self.journal.entries[state_index].completed[chunk_index] = None;
             return Err(StoreError::InjectedFault(fault));
         }
-        if let Err(error) = self.save_journal() {
-            self.journal.entries[state_index].completed[chunk_index] = None;
-            return Err(error);
-        }
+        self.append_chunk_record(entry_id, descriptor.index, actual, durable_now)?;
+        self.journal.entries[state_index].completed[chunk_index] = Some(hex::encode(actual));
         if fault == FaultPoint::AfterJournalReplace {
             return Err(StoreError::InjectedFault(fault));
         }
@@ -579,6 +592,92 @@ impl TransferStore {
         entry.status = MetadataStatus::Committing {
             destination: destination.as_str().to_owned(),
         };
+        self.save_journal()
+    }
+
+    /// Persists multiple metadata intents in one bounded atomic checkpoint.
+    pub fn begin_metadata_batch(
+        &mut self,
+        entries: &[(EntryId, RelativePath)],
+    ) -> Result<(), StoreError> {
+        if entries.len() > MAX_MANIFEST_ENTRIES
+            || entries
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != entries.len()
+        {
+            return Err(StoreError::InvalidManifest(
+                "metadata batch contains too many or duplicate entries".to_owned(),
+            ));
+        }
+        for (entry_id, _) in entries {
+            let entry = self
+                .journal
+                .metadata
+                .iter()
+                .find(|entry| entry.entry_id == *entry_id)
+                .ok_or(StoreError::UnknownEntry(*entry_id))?;
+            if !matches!(entry.status, MetadataStatus::Pending) {
+                return Err(StoreError::InvalidJournal(
+                    "metadata batch entry is already resolved".to_owned(),
+                ));
+            }
+        }
+        for (entry_id, destination) in entries {
+            let entry = self
+                .journal
+                .metadata
+                .iter_mut()
+                .find(|entry| entry.entry_id == *entry_id)
+                .ok_or(StoreError::UnknownEntry(*entry_id))?;
+            entry.status = MetadataStatus::Committing {
+                destination: destination.as_str().to_owned(),
+            };
+        }
+        self.save_journal()
+    }
+
+    /// Completes multiple previously persisted metadata intents in one checkpoint.
+    pub fn finish_metadata_batch(&mut self, entries: &[EntryId]) -> Result<(), StoreError> {
+        if entries.len() > MAX_MANIFEST_ENTRIES
+            || entries.iter().copied().collect::<BTreeSet<_>>().len() != entries.len()
+        {
+            return Err(StoreError::InvalidManifest(
+                "metadata batch contains too many or duplicate entries".to_owned(),
+            ));
+        }
+        for entry_id in entries {
+            let entry = self
+                .journal
+                .metadata
+                .iter()
+                .find(|entry| entry.entry_id == *entry_id)
+                .ok_or(StoreError::UnknownEntry(*entry_id))?;
+            if !matches!(entry.status, MetadataStatus::Committing { .. }) {
+                return Err(StoreError::InvalidJournal(
+                    "metadata batch entry has no persisted intent".to_owned(),
+                ));
+            }
+        }
+        for entry_id in entries {
+            let entry = self
+                .journal
+                .metadata
+                .iter_mut()
+                .find(|entry| entry.entry_id == *entry_id)
+                .ok_or(StoreError::UnknownEntry(*entry_id))?;
+            let destination = match &entry.status {
+                MetadataStatus::Committing { destination } => destination.clone(),
+                _ => {
+                    return Err(StoreError::InvalidJournal(
+                        "metadata batch entry changed after validation".to_owned(),
+                    ));
+                }
+            };
+            entry.status = MetadataStatus::Committed { destination };
+        }
         self.save_journal()
     }
 
@@ -720,6 +819,130 @@ impl TransferStore {
             conflict,
             fault,
         )
+    }
+
+    /// Verifies and atomically commits a bounded set with one durable intent
+    /// checkpoint and one final checkpoint. This avoids O(n²) journal rewrites for
+    /// large small-file manifests while preserving restart reconciliation.
+    pub fn commit_files_batch(
+        &mut self,
+        entry_ids: &[EntryId],
+        conflict: ConflictPolicy,
+    ) -> Result<Vec<CommitOutcome>, StoreError> {
+        if entry_ids.len() > MAX_MANIFEST_ENTRIES
+            || entry_ids.iter().copied().collect::<BTreeSet<_>>().len() != entry_ids.len()
+        {
+            return Err(StoreError::InvalidManifest(
+                "batch commit contains too many or duplicate entries".to_owned(),
+            ));
+        }
+        let mut plans = Vec::with_capacity(entry_ids.len());
+        let mut outcomes = Vec::with_capacity(entry_ids.len());
+        for &entry_id in entry_ids {
+            let file = self.file(entry_id)?.clone();
+            let state_index = self.state_index(entry_id)?;
+            match self.journal.entries[state_index].status.clone() {
+                EntryStatus::Committed { destination } => {
+                    outcomes.push(Some(CommitOutcome::Committed(
+                        RelativePath::parse(destination)?.resolve_under(&self.output_root),
+                    )));
+                    plans.push(None);
+                    continue;
+                }
+                EntryStatus::Skipped => {
+                    outcomes.push(Some(CommitOutcome::Skipped));
+                    plans.push(None);
+                    continue;
+                }
+                EntryStatus::Committing { .. } if self.part_path(entry_id).exists() => {
+                    self.journal.entries[state_index].status = EntryStatus::Verified;
+                }
+                EntryStatus::Committing { .. } => {
+                    self.reconcile_commit_intents()?;
+                    return self.commit_files_batch(entry_ids, conflict);
+                }
+                EntryStatus::Receiving | EntryStatus::Verified => {}
+            }
+            if !self.missing_chunks(entry_id)?.is_empty() {
+                return Err(StoreError::Incomplete(entry_id));
+            }
+            if hash_file(self.part_path(entry_id))? != file.decoded_digest()? {
+                return Err(StoreError::FinalDigestMismatch { entry_id });
+            }
+            let destination =
+                resolve_destination(&self.output_root, &file.parsed_path()?, conflict)?;
+            match destination {
+                Some(destination) => {
+                    let relative = path_relative_to_root(&self.output_root, &destination)?;
+                    self.journal.entries[state_index].status = EntryStatus::Committing {
+                        destination: relative.as_str().to_owned(),
+                    };
+                    plans.push(Some((entry_id, relative)));
+                    outcomes.push(None);
+                }
+                None => {
+                    self.journal.entries[state_index].status = EntryStatus::Skipped;
+                    plans.push(None);
+                    outcomes.push(Some(CommitOutcome::Skipped));
+                }
+            }
+        }
+        self.save_journal()?;
+
+        let mut parents = BTreeSet::new();
+        for (index, plan) in plans.into_iter().enumerate() {
+            let Some((entry_id, relative)) = plan else {
+                continue;
+            };
+            let final_path = relative.resolve_under(&self.output_root);
+            let destination_relative = PathBuf::from(relative.as_str());
+            if let Some(parent) = destination_relative.parent() {
+                self.output_dir.create_dir_all(parent)?;
+                parents.insert(parent.to_path_buf());
+            } else {
+                parents.insert(PathBuf::new());
+            }
+            let source_relative = self.part_relative_path(entry_id);
+            let replace = conflict == ConflictPolicy::Overwrite && final_path.exists();
+            if replace {
+                self.output_dir.rename(
+                    &source_relative,
+                    &self.output_dir,
+                    &destination_relative,
+                )?;
+            } else {
+                self.output_dir
+                    .hard_link(&source_relative, &self.output_dir, &destination_relative)
+                    .map_err(|error| {
+                        if error.kind() == io::ErrorKind::AlreadyExists {
+                            StoreError::Path(PathError::DestinationExists(final_path.clone()))
+                        } else {
+                            StoreError::Io(error)
+                        }
+                    })?;
+                self.output_dir.remove_file(&source_relative)?;
+            }
+            let state_index = self.state_index(entry_id)?;
+            self.journal.entries[state_index].status = EntryStatus::Committed {
+                destination: relative.as_str().to_owned(),
+            };
+            outcomes[index] = Some(CommitOutcome::Committed(final_path));
+        }
+        for parent in parents {
+            sync_parent_path(
+                &self.output_root,
+                (!parent.as_os_str().is_empty()).then_some(parent.as_path()),
+            )?;
+        }
+        self.save_journal()?;
+        outcomes
+            .into_iter()
+            .map(|outcome| {
+                outcome.ok_or_else(|| {
+                    StoreError::InvalidJournal("batch commit produced no outcome".to_owned())
+                })
+            })
+            .collect()
     }
 
     fn finish_commit(
@@ -918,6 +1141,89 @@ impl TransferStore {
             .join(format!("{}.part", entry_id.get()))
     }
 
+    fn append_chunk_record(
+        &mut self,
+        entry_id: EntryId,
+        index: u32,
+        digest: [u8; 32],
+        durable_now: bool,
+    ) -> Result<(), StoreError> {
+        let path = self.staging_path.join(CHUNK_LOG_NAME);
+        let length = fs::metadata(&path).map_or(0, |metadata| metadata.len());
+        if !length.is_multiple_of(CHUNK_RECORD_BYTES)
+            || length.saturating_add(CHUNK_RECORD_BYTES) > MAX_CHUNK_LOG_BYTES
+        {
+            return Err(StoreError::InvalidJournal(
+                "chunk completion log exceeds its fixed record bound".to_owned(),
+            ));
+        }
+        let mut record = [0_u8; CHUNK_RECORD_BYTES as usize];
+        record[..4].copy_from_slice(&entry_id.get().to_be_bytes());
+        record[4..8].copy_from_slice(&index.to_be_bytes());
+        record[8..].copy_from_slice(&digest);
+        let mut log = OpenOptions::new().create(true).append(true).open(path)?;
+        log.write_all(&record)?;
+        if durable_now {
+            log.sync_data()?;
+            self.pending_small_chunk_records = 0;
+        } else {
+            self.pending_small_chunk_records = self.pending_small_chunk_records.saturating_add(1);
+            if self.pending_small_chunk_records >= SMALL_CHUNK_SYNC_BATCH {
+                log.sync_data()?;
+                self.pending_small_chunk_records = 0;
+            }
+        }
+        Ok(())
+    }
+
+    fn replay_chunk_log(&mut self) -> Result<(), StoreError> {
+        let path = self.staging_path.join(CHUNK_LOG_NAME);
+        let mut bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(StoreError::Io(error)),
+        };
+        if bytes.len() as u64 > MAX_CHUNK_LOG_BYTES {
+            return Err(StoreError::InvalidJournal(
+                "chunk completion log exceeds its byte bound".to_owned(),
+            ));
+        }
+        let complete_length =
+            bytes.len() / CHUNK_RECORD_BYTES as usize * CHUNK_RECORD_BYTES as usize;
+        if complete_length != bytes.len() {
+            bytes.truncate(complete_length);
+            let log = OpenOptions::new().write(true).open(&path)?;
+            log.set_len(complete_length as u64)?;
+            log.sync_data()?;
+        }
+        for record in bytes.chunks_exact(CHUNK_RECORD_BYTES as usize) {
+            let entry_raw = u32::from_be_bytes(record[..4].try_into().expect("fixed record"));
+            let entry_id = EntryId::new(entry_raw).ok_or_else(|| {
+                StoreError::InvalidJournal("chunk log contains a zero entry ID".to_owned())
+            })?;
+            let index = u32::from_be_bytes(record[4..8].try_into().expect("fixed record"));
+            let digest: [u8; 32] = record[8..].try_into().expect("fixed record");
+            let state_index = self.state_index(entry_id)?;
+            let slot = self.journal.entries[state_index]
+                .completed
+                .get_mut(index as usize)
+                .ok_or_else(|| {
+                    StoreError::InvalidJournal(
+                        "chunk log index exceeds the accepted manifest".to_owned(),
+                    )
+                })?;
+            let encoded = hex::encode(digest);
+            match slot {
+                Some(existing) if existing != &encoded => {
+                    return Err(StoreError::ConflictingChunk { entry_id, index });
+                }
+                Some(_) => {}
+                None => *slot = Some(encoded),
+            }
+        }
+        Ok(())
+    }
+
     fn save_journal(&self) -> Result<(), StoreError> {
         save_json(self.staging_path.join("state.json"), &self.journal)
     }
@@ -998,6 +1304,17 @@ fn validate_journal(files: &[StagedFile], journal: &ResumeJournal) -> Result<(),
             ));
         }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<(), StoreError> {
+    File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 

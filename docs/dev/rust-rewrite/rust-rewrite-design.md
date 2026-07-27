@@ -143,7 +143,7 @@ SP-001 的 Linux↔Linux、Windows↔Linux 原生双机验证表明，`Noise_XX_
 - Web 模式继续使用 rustls HTTPS，不与 Noise 混用；
 - mDNS 只发布不可信的发现提示和 identity fingerprint，最终身份由 Noise 握手确认。
 
-约束：`snow 0.10.0` README 明确说明没有正式安全审计。正式发布前必须进行专项安全评审、RustSec 审计、framing/replay/fuzz 测试；Spike 代码不得复制为生产实现。如果安全评审不通过，回退到重新评估 rustls + 应用签名，而不是降低认证要求。
+T-024 已获得并核验 Trail of Bits 对 Snow 的独立安全评估及 fix review（见 `snow-0.10-security-evidence.md`）。锁定的 `snow 0.10.0` 包含全部 medium/low 修复；剩余两个 informational finding 中，PSK/pre-message finding 不适用于固定 XX，ephemeral memory 未 zeroize 作为本机 root/physical-memory 残余风险记录。仍必须保留 RustSec、framing/replay/fuzz 和产品级授权测试；不得增加 PSK、fallback/custom pattern 或 suite negotiation。
 
 ## 3. 总体架构
 
@@ -392,7 +392,7 @@ caps=files,dirs,text,resume
 
 | 项目 | 默认值 | 说明 |
 |---|---:|---|
-| 发现超时 | 2 秒 | 可配置 |
+| 发现超时 | 1.8 秒 | 可配置；给连接/选择留出 2 秒体验预算 |
 | offer 确认超时 | 120 秒 | 到期自动拒绝 |
 | 块大小 | 4 MiB | 协商范围 256 KiB–16 MiB |
 | 并发文件流 | 4 | 根据磁盘性能可配置 |
@@ -407,14 +407,17 @@ staging 设计：
 <output>/.quick-share-staging/<transfer-id>/
 ├── manifest.json
 ├── state.json
+├── chunks.log
 └── files/
     └── <entry-id>.part
 ```
 
 - staging 位于最终输出文件系统，保证最终 rename 不跨文件系统；
 - `.part` 文件不得作为最终文件暴露；
-- 每个块写入成功并同步必要元数据后，原子更新 `state.json`；
-- 完整文件通过最终 BLAKE3 后按冲突策略提交；
+- `state.json` 保存有界快照，固定 40-byte `chunks.log` 记录块完成事件，避免对大 manifest 每块重写完整 JSON；
+- 大于 64 KiB 的块在 ACK 前同步数据和日志；小文件块最多 256 条（且最多 16 MiB plaintext）为一组同步。checkpoint前的进程故障由 status bitmap 要求sender幂等重传；极端电源故障即使使data/log durability次序不完整，最终BLAKE3仍会fail closed并禁止暴露final文件；
+- manifest 最多 20,000 entries，可容纳 10,000 files及有界目录/链接metadata；
+- 完整文件通过最终 BLAKE3 后按冲突策略批量持久化 intent、提交并checkpoint，避免10,000文件O(n²) journal rewrite；
 - 目录和安全符号链接在提交阶段创建；
 - 绝对或逃逸型符号链接默认不创建，要求额外确认或保存为带说明的安全降级文件。
 
@@ -484,7 +487,7 @@ trusted_policy = "auto"       # auto | confirm
 conflict = "rename"           # rename | ask | skip | overwrite | error
 
 [discovery]
-timeout_ms = 2000
+timeout_ms = 1800
 include_virtual = false
 
 [network]
@@ -540,9 +543,10 @@ Receiver                         Sender
 ### 6.2 断点续传
 
 ```text
-Sender reconnects with same device identity + transfer ID
-  → GET /transfers/{id}/status
-  → receiver verifies owner and returns completed/missing chunks
+Sender re-runs the same command with --resume <transfer-id>
+  → reconnects with the same static identity and sends explicit resume OFFER
+  → receiver requires the exact transfer ID + immutable manifest + authenticated owner
+  → receiver returns a fresh bounded authorization and completed/missing bitmap
   → sender revalidates source snapshot
   → sender sends missing chunks only
   → final verification and commit

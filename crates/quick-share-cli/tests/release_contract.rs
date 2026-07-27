@@ -63,6 +63,7 @@ fn release_pipeline_contains_all_assets_integrity_and_smoke_gates() {
         "smoke-unix.sh",
         "smoke-windows.ps1",
         "check-signing-key.sh",
+        "cargo-deny-action@",
     ] {
         assert!(release.contains(required), "release is missing {required}");
     }

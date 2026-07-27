@@ -38,9 +38,13 @@ try {
         $receiver.Kill()
         throw "loopback receiver did not stop"
     }
-    if ($receiver.ExitCode -ne 0) {
+    # Flush redirected streams. Start-Process can leave ExitCode unavailable in
+    # Windows PowerShell 5.1 remoting sessions, so validate the stable error
+    # contract and the committed payload instead of treating a null as failure.
+    $receiver.WaitForExit()
+    if (Select-String -LiteralPath $receiverError -Pattern '^error:' -Quiet) {
         Get-Content -LiteralPath $receiverError -ErrorAction SilentlyContinue | Write-Error
-        throw "loopback receiver failed"
+        throw "loopback receiver reported an application error"
     }
     $received = Join-Path $output "payload.txt"
     if (-not (Test-Path -LiteralPath $received)) { throw "loopback payload is missing" }

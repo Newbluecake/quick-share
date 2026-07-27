@@ -100,7 +100,7 @@ pub struct DiscoveryConfig {
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
-            timeout_ms: 2_000,
+            timeout_ms: 1_800,
             include_virtual: false,
         }
     }

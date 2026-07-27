@@ -74,6 +74,7 @@ impl ClientConnector {
             .await
             .map_err(|_| DirectError::ConnectTimeout)?
             .map_err(DirectError::Connect)?;
+        stream.set_nodelay(true).map_err(DirectError::Connect)?;
         let cancellation = CancellationToken::new();
         let mut handshake = NoiseHandshake::initiator(&self.identity, self.operation_timeout)?;
         let one = handshake.write_message()?;
@@ -155,10 +156,26 @@ impl NoiseClientTransport {
         &self,
         offer: quick_share_protocol::TransferOffer,
     ) -> Result<AuthorizationToken, DirectError> {
+        self.authorize_offer(offer, false).await
+    }
+
+    /// Re-authorizes the exact same transfer ID and manifest after an interrupted sender exits.
+    pub async fn resume_offer(
+        &self,
+        offer: quick_share_protocol::TransferOffer,
+    ) -> Result<AuthorizationToken, DirectError> {
+        self.authorize_offer(offer, true).await
+    }
+
+    async fn authorize_offer(
+        &self,
+        offer: quick_share_protocol::TransferOffer,
+        resume: bool,
+    ) -> Result<AuthorizationToken, DirectError> {
         let response: OfferStatusResponse = self
             .exchange(
                 MessageType::OfferCreate,
-                &OfferCreate { offer },
+                &OfferCreate { offer, resume },
                 MessageType::OfferStatus,
                 Some(OFFER_RESPONSE_TIMEOUT),
             )
@@ -317,6 +334,7 @@ where
         peer_address: SocketAddr,
         cancellation: CancellationToken,
     ) -> Result<ServerSessionOutcome, DirectError> {
+        stream.set_nodelay(true).map_err(DirectError::Connect)?;
         let mut handshake = NoiseHandshake::responder(&self.identity, self.operation_timeout)?;
         let one =
             read_network_handshake(&mut stream, self.operation_timeout, &cancellation).await?;
@@ -383,12 +401,21 @@ where
                         &evidence,
                         &self.trust_store,
                     )?;
-                    let mut submission = self.offers.create_offer(
-                        &peer,
-                        Some(peer_address),
-                        create.offer,
-                        std::time::Instant::now(),
-                    )?;
+                    let mut submission = if create.resume {
+                        self.offers.resume_offer(
+                            &peer,
+                            Some(peer_address),
+                            create.offer,
+                            std::time::Instant::now(),
+                        )?
+                    } else {
+                        self.offers.create_offer(
+                            &peer,
+                            Some(peer_address),
+                            create.offer,
+                            std::time::Instant::now(),
+                        )?
+                    };
                     let resolution = match submission.resolution.try_recv() {
                         Ok(resolution) => resolution,
                         Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
@@ -643,6 +670,17 @@ async fn send_receiver_error(
     let code = match error {
         ReceiverError::Unauthorized | ReceiverError::Offer(_) => ErrorCode::Unauthorized,
         ReceiverError::FileStreamLimit | ReceiverError::ReceiveTaskLimit => {
+            ErrorCode::ResourceLimit
+        }
+        ReceiverError::Store(crate::StoreError::Io(error))
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::StorageFull
+                    | std::io::ErrorKind::QuotaExceeded
+                    | std::io::ErrorKind::FileTooLarge
+                    | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
             ErrorCode::ResourceLimit
         }
         ReceiverError::NotFound => ErrorCode::NotFound,

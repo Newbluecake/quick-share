@@ -163,6 +163,7 @@ fn request(route: quick_share_cli::orchestration::SendRoute) -> SendRequest {
             TextPayload::new(TextSource::Literal, "hello").expect("text"),
         ),
         route,
+        resume_transfer_id: None,
         allow_http: false,
         assume_yes: true,
     }
@@ -196,6 +197,31 @@ async fn only_definitive_zero_peer_scan_uses_web_fallback() {
         terminal.modes.lock().expect("modes").as_slice(),
         &[SendMode::WebHttps]
     );
+}
+
+#[tokio::test]
+async fn resume_with_zero_peers_never_falls_back_to_web() {
+    let discovery = CountingDiscovery::new(Ok(ScanResult::complete(Vec::new())));
+    let direct = FakeDirect::new(DirectResult::Ok);
+    let web = FakeWeb {
+        calls: AtomicUsize::new(0),
+    };
+    let terminal = FakeSendTerminal::default();
+    let mut request = request(quick_share_cli::orchestration::SendRoute::Auto);
+    request.resume_transfer_id = Some(quick_share_protocol::TransferId::new(Uuid::now_v7()));
+    let result = SendOrchestrator {
+        discovery: &discovery,
+        direct: &direct,
+        web: &web,
+        terminal: &terminal,
+        local_device_id: device('a'),
+        discovery_timeout: Duration::from_millis(1),
+        interactive: false,
+    }
+    .run(&request)
+    .await;
+    assert!(matches!(result, Err(AppError::PeerUnavailable(_))));
+    assert_eq!(web.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -331,6 +357,7 @@ fn literal_clipboard_unicode_empty_and_safe_delivery_are_bounded_end_to_end() {
         clipboard: false,
         peer: None,
         web: false,
+        resume: None,
         follow_links: false,
         allow_http: false,
         assume_yes: false,

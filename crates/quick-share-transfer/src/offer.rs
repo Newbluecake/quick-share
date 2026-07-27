@@ -253,6 +253,74 @@ impl OfferManager {
         Ok(OfferSubmission { view, resolution })
     }
 
+    /// Re-authorizes only an identical, previously accepted transfer from the same
+    /// authenticated static identity. A restarted receiver has no in-memory offer and
+    /// therefore handles this as a new, normally confirmed offer while reusing durable chunks.
+    pub fn resume_offer(
+        &self,
+        peer: &PeerAuthContext,
+        peer_address: Option<SocketAddr>,
+        offer: TransferOffer,
+        now: Instant,
+    ) -> Result<OfferSubmission, OfferError> {
+        if !peer.allows_pre_authorization(PreAuthorizationPermission::OfferCreate) {
+            return Err(OfferError::Unauthorized);
+        }
+        offer
+            .validate()
+            .map_err(|error| OfferError::InvalidOffer(error.to_string()))?;
+        for entry in &offer.entries {
+            let path = RelativePath::parse(&entry.relative_path)
+                .map_err(|error| OfferError::InvalidOffer(error.to_string()))?;
+            if path.as_str() != entry.relative_path {
+                return Err(OfferError::InvalidOffer(
+                    "manifest paths must use normalized forward slashes".to_owned(),
+                ));
+            }
+        }
+        if &offer.sender.device_id != peer.device_id() || offer.sender.name != peer.claimed_name() {
+            return Err(OfferError::IdentityMismatch);
+        }
+        let manifest_digest = digest_offer(&offer)?;
+        let transfer_id = offer.transfer_id;
+        let mut state = self.lock_state()?;
+        purge(&mut state, &self.policy, now);
+        let Some(mut stored) = state.offers.remove(&transfer_id) else {
+            drop(state);
+            return self.create_offer(peer, peer_address, offer, now);
+        };
+        if stored.owner != *peer.device_id()
+            || stored.owner_public_key != peer.public_key()
+            || stored.manifest_digest != manifest_digest
+            || stored.offer != offer
+            || stored.status != TransferStatus::Accepted
+        {
+            state.offers.insert(transfer_id, stored);
+            return Err(OfferError::ResumeMismatch);
+        }
+        if let Err(error) = enforce_rate(&mut state, &self.policy, peer.device_id(), now) {
+            state.offers.insert(transfer_id, stored);
+            return Err(error);
+        }
+        let token = match issue_grant(&mut state, &stored, &self.policy, now) {
+            Ok(token) => token,
+            Err(error) => {
+                state.offers.insert(transfer_id, stored);
+                return Err(error);
+            }
+        };
+        stored.updated_at = now;
+        let view = offer_view(peer, peer_address, &stored.offer, peer.is_trusted());
+        state.seen.insert(transfer_id, now);
+        state.offers.insert(transfer_id, stored);
+        let (sender, resolution) = oneshot::channel();
+        let _ = sender.send(OfferResolution {
+            status: TransferStatus::Accepted,
+            authorization: Some(token),
+        });
+        Ok(OfferSubmission { view, resolution })
+    }
+
     /// Applies a local terminal decision. Trust requires explicit SAS verification.
     pub fn decide(
         &self,
@@ -579,6 +647,8 @@ pub enum OfferError {
     Unauthorized,
     #[error("offer transfer ID was replayed")]
     Replay,
+    #[error("resume offer does not exactly match the accepted transfer and authenticated sender")]
+    ResumeMismatch,
     #[error("offer replay cache is full")]
     ReplayCacheFull,
     #[error("too many pending offers")]

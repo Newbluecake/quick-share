@@ -32,7 +32,7 @@ A v1 shared secret **cannot** become a trusted v2 device. Establish trust by com
 - Web mode defaults to a temporary self-signed HTTPS certificate. HTTP requires `--allow-http` and prints a warning.
 - Unknown non-interactive device offers are rejected unless `--yes` is explicit; `--yes` never creates durable trust.
 - Automatic Web fallback is intentionally narrow. Discovery errors, partial scans, rejection, timeout, and direct-transfer failure return errors instead of changing transport.
-- Received files use staging, BLAKE3 verification, durable resume journals, and atomic final commit.
+- Received files use staging, BLAKE3 verification, bounded resume journals, and atomic final commit. Direct sends print a transfer UUID; after a sender/receiver process restart, rerun the exact content and target with `--resume UUID`.
 - Symbolic links are preserved as metadata by default. Following targets requires `--follow-links`.
 - Text is never executed or automatically opened. Explicit output files are no-clobber.
 - Existing `sc` and `rc` commands are never replaced by the installer.
