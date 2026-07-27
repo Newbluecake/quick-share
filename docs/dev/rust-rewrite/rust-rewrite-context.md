@@ -3,7 +3,7 @@
 > **功能标识**: rust-rewrite
 > **复杂度**: complex
 > **工作流模式**: normal（planning=batch, execution=batch）
-> **最后更新**: 2026-07-27T12:19:13+08:00
+> **最后更新**: 2026-07-27T15:01:53+08:00
 
 ## 配置参数
 
@@ -28,7 +28,7 @@ parallel: auto
 | 阶段 2：技术设计 | v2 已完成并获批准 | `rust-rewrite-design.md` |
 | 阶段 3：任务拆分 | 已完成并获批准 | `rust-rewrite-tasks.md` |
 | 阶段 4：环境准备 | 已完成 | 正式 Rust workspace、toolchain、CI |
-| 阶段 5：代码实施 | Batch 8 已完成，停在 Batch 9 人工闸门 | T-021 至 T-023、`Batch-8-review.md` |
+| 阶段 5：代码实施 | Batch 9 Conditional PASS，等待最终tag批准 | T-024、`rust-rewrite-acceptance-report.md` |
 
 ## Planning 结论摘要
 
@@ -159,15 +159,20 @@ Batch 0 已按 Conditional Go 获批，验证结果：
 - fuzz：1,499,582 runs / 21 seconds，无crash、panic、OOM或sanitizer finding；
 - GitHub repository已配置`RELEASE_SIGNING_KEY_PEM` secret；private key不在worktree/日志，公开root位于`security/release-signing-key.pem`并有一致性test。
 
-## 当前闸门：Batch 9
+## Batch 9 结果与最终发布闸门
 
-Batch 8已关闭。未经用户明确批准，不开始T-024跨平台、性能、安全与发布总验收。
+用户已批准T-024执行，并明确调整范围：当前无macOS机器和Apple Developer账号，macOS true-host、Developer ID签名、公证和Gatekeeper无警告安装延期；随后指示当前不再处理gh，因此不创建/tag/publish真实signed candidate，也不把未读取的hosted runner结果计入通过。
 
-Batch 9硬门包括：
+已完成：
 
-1. `snow 0.10.0`专家安全审查/审计证据或替代实现；
-2. macOS Intel/Apple Silicon真机matrix；
-3. 真实signed candidate release和Linux/macOS/Windows self-update/rollback；
-4. 1 GiB/10 GiB/10,000 files、进程重启、磁盘不足、权限、冲突和性能/RSS基准；
-5. 跨sender CLI invocation pending-transfer选择/恢复UX；
-6. 最终`rust-rewrite-acceptance-report.md`和发布负责人明确批准v2.0.0 tag。
+1. 找到Trail of Bits正式Snow安全评估和fix review；验证`snow 0.10.0`包含全部medium/low修复，详见`snow-0.10-security-evidence.md`；
+2. Red发现10,000小文件约11 files/s和complete timeout；修复TCP_NODELAY、fixed append log、bounded small checkpoint、batched file/directory commit和20,000-entry hard bound；Linux提升到约1,019 files/s，Windows 10,000 files为34.324s；
+3. 新增production `send --resume TRANSFER_ID`，只允许same authenticated static owner和exact immutable offer；Linux receiver restart 1 GiB、Windows 512 MiB通过；
+4. Linux 1 GiB：58.28 MiB/s、sender 65,876 KiB、receiver 14,940 KiB；10 GiB：55.81 MiB/s、sender 68,176 KiB、receiver 15,136 KiB，内存未随payload线性增长；
+5. production routing/discovery 1.820s，rejection/explicit/zero-peer Web边界通过；storage limit、permission、conflict和port occupied真实fault matrix通过；
+6. Windows release smoke、10,000 Unicode files、process restart resume、Pester 11/11通过；
+7. Rust 167 tests listed（166 passed、1 true-host mDNS ignored）；RustSec 366 dependencies无advisory；cargo-deny licenses/sources、actionlint、Windows cross、fmt、Clippy通过；
+8. fuzz 2,306,514 runs / 31 seconds无crash/panic/OOM/sanitizer finding；
+9. 总报告：`rust-rewrite-acceptance-report.md`；当前批准范围内无未处理代码级P0/P1。
+
+当前唯一闸门是发布负责人对final `v2.0.0` tag的单独明确批准。报告明确不声称延期的macOS true-host/Apple signing或真实GitHub remote updater已通过。
