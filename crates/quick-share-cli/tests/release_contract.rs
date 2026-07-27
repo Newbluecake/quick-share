@@ -67,10 +67,11 @@ fn release_pipeline_contains_all_assets_integrity_and_smoke_gates() {
     ] {
         assert!(release.contains(required), "release is missing {required}");
     }
+    let release_lines: Vec<_> = release.lines().map(str::trim).collect();
     assert!(
-        release.contains("          path: release-assets\n")
-            && release.contains("          upload-release-assets: false")
-            && !release.contains("          path: release-assets/${{ matrix.asset }}"),
+        release_lines.contains(&"path: release-assets")
+            && release_lines.contains(&"upload-release-assets: false")
+            && !release_lines.contains(&"path: release-assets/${{ matrix.asset }}"),
         "SBOM action must scan the staged directory rather than treat one executable as a directory"
     );
     for line in release
