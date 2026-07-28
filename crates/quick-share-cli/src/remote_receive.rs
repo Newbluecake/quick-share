@@ -31,6 +31,7 @@ use quick_share_transfer::{
 use std::{
     collections::BTreeSet,
     net::SocketAddr,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -83,10 +84,7 @@ pub(crate) async fn run_remote_receive(
     terminal: ConsoleTerminal,
     intent: ReceiveIntent,
 ) -> Result<(), AppError> {
-    let output_root = intent
-        .output
-        .clone()
-        .unwrap_or_else(|| config.receive.output.clone());
+    let output_root = remote_output_root(intent.output.clone(), std::env::current_dir)?;
     std::fs::create_dir_all(&output_root)
         .map_err(|error| AppError::Filesystem(error.to_string()))?;
     if !output_root.is_dir() {
@@ -337,6 +335,16 @@ pub(crate) async fn run_remote_receive(
     result
 }
 
+fn remote_output_root<F>(explicit: Option<PathBuf>, current_dir: F) -> Result<PathBuf, AppError>
+where
+    F: FnOnce() -> std::io::Result<PathBuf>,
+{
+    explicit.map_or_else(
+        || current_dir().map_err(|error| AppError::Filesystem(error.to_string())),
+        Ok,
+    )
+}
+
 async fn resolve_target(
     requested: Option<&str>,
     identity: Arc<DeviceIdentity>,
@@ -502,6 +510,22 @@ mod tests {
     use super::*;
     use quick_share_protocol::{SourceSelectionResponse, TransferId};
     use uuid::Uuid;
+
+    #[test]
+    fn remote_request_defaults_to_current_directory_but_honors_explicit_output() {
+        let current = PathBuf::from("working-directory");
+        assert_eq!(
+            remote_output_root(None, || Ok(current.clone())).expect("current directory"),
+            current
+        );
+        assert_eq!(
+            remote_output_root(Some(PathBuf::from("chosen")), || {
+                Err(std::io::Error::other("must not be called"))
+            })
+            .expect("explicit output"),
+            PathBuf::from("chosen")
+        );
+    }
 
     #[test]
     fn selection_terminal_statuses_keep_stable_cli_meaning() {
