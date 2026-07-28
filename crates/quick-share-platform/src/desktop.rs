@@ -49,6 +49,8 @@ impl AuthorizationChoice {
 pub struct SourceDialog {
     /// Untrusted remote display name; native UI must render it as plain text.
     pub requester_name: String,
+    /// Local initial directory chosen from the last successful source selection.
+    pub initial_directory: PathBuf,
 }
 
 #[derive(Clone, PartialEq, Eq)]

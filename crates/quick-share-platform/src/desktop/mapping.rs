@@ -118,7 +118,11 @@ impl<D: NativeDialogs> DesktopInteraction for DialogMapper<D> {
             secondary: Some("选择文件夹".to_owned()),
             tertiary: Some("取消".to_owned()),
         })?;
-        let initial = env::current_dir().map_err(|_| DesktopError::Backend)?;
+        let initial = if request.initial_directory.is_dir() {
+            request.initial_directory.clone()
+        } else {
+            env::current_dir().map_err(|_| DesktopError::Backend)?
+        };
         match result {
             MessageResult::Primary => {
                 match self.dialogs.pick_files("选择一个或多个文件", &initial)? {
@@ -320,7 +324,8 @@ mod tests {
         let mapper = DialogMapper::new(dialogs);
         assert!(matches!(
             mapper.choose_send_source(&SourceDialog {
-                requester_name: "peer".to_owned()
+                requester_name: "peer".to_owned(),
+                initial_directory: env::current_dir().expect("current directory"),
             }),
             Ok(SourceChoice::Files(paths)) if paths.len() == 2
         ));
@@ -338,7 +343,8 @@ mod tests {
             .push_back(Some(PathBuf::from("folder")));
         assert!(matches!(
             DialogMapper::new(dialogs).choose_send_source(&SourceDialog {
-                requester_name: "peer".to_owned()
+                requester_name: "peer".to_owned(),
+                initial_directory: env::current_dir().expect("current directory"),
             }),
             Ok(SourceChoice::Folder(_))
         ));
@@ -351,14 +357,16 @@ mod tests {
             .push_back(Some(Vec::new()));
         assert_eq!(
             DialogMapper::new(dialogs).choose_send_source(&SourceDialog {
-                requester_name: "peer".to_owned()
+                requester_name: "peer".to_owned(),
+                initial_directory: env::current_dir().expect("current directory"),
             }),
             Err(DesktopError::InvalidSelection)
         );
         assert_eq!(
             DialogMapper::new(FakeDialogs::with_messages([MessageResult::Closed]))
                 .choose_send_source(&SourceDialog {
-                    requester_name: "peer".to_owned()
+                    requester_name: "peer".to_owned(),
+                    initial_directory: env::current_dir().expect("current directory"),
                 }),
             Ok(SourceChoice::Cancelled)
         );

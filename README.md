@@ -115,7 +115,8 @@ quick-share receive --request --peer 192.168.1.20:4242 --output ~/Downloads/rece
 未提供 `--output` 时，主动远程选择会保存到运行命令时的当前目录；`--output` 可覆盖该目录。`rc` 是 `quick-share receive --request` 的快捷形式。普通被动接收请使用完整命令 `quick-share receive`，它和 Windows Agent 接收对端 `send` 时仍使用配置的 Downloads 目录。
 
 - 自动发现只会列出协商支持远程选择的 Windows 代理；非交互模式下必须用 `--peer` 指定目标。
-- Windows 上默认使用该设备上次保存的目录，并提供“更改目录”；仅在完整信任身份时才记忆目录。
+- Windows 上默认使用该设备上次保存的接收目录，并提供“更改目录”；仅在完整信任身份时才记忆接收目录。
+- Windows 文件/文件夹选择器会从上次成功选择内容所在的目录打开；取消选择或目录已失效时不会覆盖记录。
 - 目标出现同名内容时，Windows 会提示“覆盖 / 跳过 / 重命名”和“仅此项 / 应用到全部”。
 - 回连只连接已认证控制连接观测到的来源 IP 并固定完整远端公钥，且精确校验请求与传输标识。
 

@@ -26,6 +26,7 @@ fn unavailable_desktop_fails_every_operation_without_fabricating_a_choice() {
     assert!(matches!(
         desktop.choose_send_source(&SourceDialog {
             requester_name: "peer".to_owned(),
+            initial_directory: std::env::current_dir().expect("current directory"),
         }),
         Err(DesktopError::Unsupported)
     ));
@@ -118,6 +119,7 @@ fn broker_deadline_and_event_loop_exit_fail_closed_without_stale_dialogs() {
     let (broker, receiver) = desktop_broker(1, Duration::from_millis(20), Arc::new(|| Ok(())));
     let request = SourceDialog {
         requester_name: "peer".to_owned(),
+        initial_directory: std::env::current_dir().expect("current directory"),
     };
     assert_eq!(
         broker.choose_send_source(&request),

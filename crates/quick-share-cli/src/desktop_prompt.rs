@@ -9,10 +9,11 @@ use quick_share_core::{
     receive::{ReceiveBinding, ReceiveBindingStore, ReceiveDestinationStore},
 };
 use quick_share_platform::{
-    AppDirs,
+    AppDirs, FileSensitivity, atomic_write,
     desktop::{
         AuthorizationChoice, AuthorizationDialog, ConflictAction, ConflictChoice, ConflictDialog,
         ConflictScope, DesktopError, DesktopInteraction, DirectoryChoice, ReceiveDirectoryDialog,
+        SourceChoice,
     },
 };
 use quick_share_protocol::{
@@ -26,11 +27,73 @@ use quick_share_transfer::{
     receiver::{ReceiverEndpoint, ReceiverError},
     receiver_router::{ReceiverRouter, ReceiverRouterError},
 };
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    fs,
+    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::Instant,
 };
+
+const SOURCE_DIRECTORY_VERSION: u8 = 1;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SourceDirectoryStore {
+    path: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SourceDirectoryDocument {
+    version: u8,
+    last_directory: PathBuf,
+}
+
+impl SourceDirectoryStore {
+    pub(crate) fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub(crate) fn load(&self) -> Result<Option<PathBuf>, String> {
+        let source = match fs::read(&self.path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let document: SourceDirectoryDocument =
+            serde_json::from_slice(&source).map_err(|error| error.to_string())?;
+        if document.version != SOURCE_DIRECTORY_VERSION {
+            return Err("unsupported source-directory state version".to_owned());
+        }
+        Ok(document
+            .last_directory
+            .is_dir()
+            .then_some(document.last_directory))
+    }
+
+    pub(crate) fn remember_choice(&self, choice: &SourceChoice) -> Result<(), String> {
+        let Some(directory) = selected_source_directory(choice) else {
+            return Ok(());
+        };
+        let document = SourceDirectoryDocument {
+            version: SOURCE_DIRECTORY_VERSION,
+            last_directory: directory,
+        };
+        let source = serde_json::to_vec_pretty(&document).map_err(|error| error.to_string())?;
+        atomic_write(&self.path, &source, FileSensitivity::Private)
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn selected_source_directory(choice: &SourceChoice) -> Option<PathBuf> {
+    let selected = match choice {
+        SourceChoice::Files(paths) => paths.first()?.parent()?,
+        SourceChoice::Folder(path) => path.parent().unwrap_or(path),
+        SourceChoice::Cancelled => return None,
+    };
+    selected.is_dir().then(|| selected.to_path_buf())
+}
 
 #[derive(Clone)]
 struct PlannedTransfer {
@@ -567,7 +630,7 @@ fn map_router_error(error: ReceiverRouterError) -> ReceiverError {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_conflict_choice, build_plan_sync};
+    use super::{SourceDirectoryStore, apply_conflict_choice, build_plan_sync};
     use quick_share_core::destination::{ConflictKind, ConflictSelections, DestinationDisposition};
     use quick_share_platform::desktop::{
         AuthorizationChoice, AuthorizationDialog, ConflictAction, ConflictChoice, ConflictDialog,
@@ -736,6 +799,52 @@ mod tests {
         assert!(
             build_plan_sync(&cancel, root.path(), &offer, ConflictSelections::default()).is_err()
         );
+    }
+
+    #[test]
+    fn source_directory_store_reopens_the_parent_of_the_last_selection() {
+        let root = tempfile::tempdir().expect("root");
+        let downloads = root.path().join("Downloads");
+        std::fs::create_dir(&downloads).expect("downloads");
+        let file = downloads.join("payload.txt");
+        std::fs::write(&file, b"payload").expect("file");
+        let state = root.path().join("source-selection.json");
+        let store = SourceDirectoryStore::new(&state);
+
+        store
+            .remember_choice(&SourceChoice::Files(vec![file]))
+            .expect("remember file directory");
+        assert_eq!(
+            SourceDirectoryStore::new(&state).load().expect("reload"),
+            Some(downloads.clone())
+        );
+
+        store
+            .remember_choice(&SourceChoice::Cancelled)
+            .expect("cancel is not persisted");
+        assert_eq!(store.load().expect("unchanged"), Some(downloads.clone()));
+
+        let selected_folder = downloads.join("folder");
+        std::fs::create_dir(&selected_folder).expect("folder");
+        store
+            .remember_choice(&SourceChoice::Folder(selected_folder))
+            .expect("remember folder parent");
+        assert_eq!(store.load().expect("folder parent"), Some(downloads));
+    }
+
+    #[test]
+    fn source_directory_store_ignores_a_directory_that_no_longer_exists() {
+        let root = tempfile::tempdir().expect("root");
+        let selected = root.path().join("selected");
+        std::fs::create_dir(&selected).expect("selected");
+        let file = selected.join("payload.txt");
+        std::fs::write(&file, b"payload").expect("file");
+        let store = SourceDirectoryStore::new(root.path().join("source-selection.json"));
+        store
+            .remember_choice(&SourceChoice::Files(vec![file]))
+            .expect("remember");
+        std::fs::remove_dir_all(&selected).expect("remove selected directory");
+        assert_eq!(store.load().expect("stale state"), None);
     }
 
     #[test]

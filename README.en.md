@@ -115,7 +115,8 @@ quick-share receive --request --peer 192.168.1.20:4242 --output ~/Downloads/rece
 Without `--output`, an active remote-selection request saves into the command's current working directory; `--output` overrides it. `rc` is the shortcut for `quick-share receive --request`. Use the full `quick-share receive` command for ordinary passive receive; it and the Windows agent receiving a peer's `send` continue to use the configured Downloads directory.
 
 - Auto-discovery lists only agents that negotiated remote selection; non-interactive use must name the target with `--peer`.
-- Windows defaults to that device's last saved directory and offers "Change directory"; the directory is remembered only for a fully trusted identity.
+- Windows defaults to that device's last saved receive directory and offers "Change directory"; the receive directory is remembered only for a fully trusted identity.
+- The Windows file/folder picker opens in the directory of the last successful source selection; cancellation or a stale directory does not replace that preference.
 - On a destination conflict, Windows prompts Overwrite / Skip / Rename and This entry / All remaining.
 - The callback dials only the source IP observed on the authenticated control connection with the pinned complete remote key, and exactly matches the request and transfer identifiers.
 

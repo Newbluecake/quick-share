@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             let result = desktop.choose_send_source(&SourceDialog {
                 requester_name: "Quick Share true-host test".to_owned(),
+                initial_directory: std::env::current_dir().unwrap_or_default(),
             });
             println!("production desktop result: {result:?}");
             match tray_events.recv() {

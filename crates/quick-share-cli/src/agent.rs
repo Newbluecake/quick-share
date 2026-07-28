@@ -6,7 +6,9 @@ use crate::{
         PreparedPathContent, finalize_path_transfer, load_identity, prepare_path_content,
         resolve_bind_ip, sender_policy, trust_store,
     },
-    desktop_prompt::{AgentReceiver, DesktopOfferPrompt, callback_notification},
+    desktop_prompt::{
+        AgentReceiver, DesktopOfferPrompt, SourceDirectoryStore, callback_notification,
+    },
 };
 use async_trait::async_trait;
 use quick_share_core::{
@@ -17,8 +19,8 @@ use quick_share_discovery::{Advertisement, MdnsRegistration};
 use quick_share_platform::{
     AppDirs,
     desktop::{
-        AuthorizationChoice, AuthorizationDialog, DesktopInteraction, DesktopNotification,
-        SourceChoice, SourceDialog, windows::TrayAction,
+        AuthorizationChoice, AuthorizationDialog, DesktopError, DesktopInteraction,
+        DesktopNotification, SourceChoice, SourceDialog, windows::TrayAction,
     },
 };
 use quick_share_protocol::{
@@ -60,6 +62,7 @@ struct PreparedSelection {
 struct DesktopSelectionHandler {
     desktop: Arc<dyn DesktopInteraction>,
     callback_limit: Arc<Semaphore>,
+    source_directories: SourceDirectoryStore,
     prepared: Mutex<BTreeMap<TransferId, PreparedSelection>>,
 }
 
@@ -68,16 +71,22 @@ impl std::fmt::Debug for DesktopSelectionHandler {
         formatter
             .debug_struct("DesktopSelectionHandler")
             .field("desktop", &"[DESKTOP]")
+            .field("source_directories", &"[PREFERENCE STORE]")
             .field("prepared", &"[REDACTED]")
             .finish()
     }
 }
 
 impl DesktopSelectionHandler {
-    fn new(desktop: Arc<dyn DesktopInteraction>, callback_limit: Arc<Semaphore>) -> Self {
+    fn new(
+        desktop: Arc<dyn DesktopInteraction>,
+        callback_limit: Arc<Semaphore>,
+        source_directories: SourceDirectoryStore,
+    ) -> Self {
         Self {
             desktop,
             callback_limit,
+            source_directories,
             prepared: Mutex::new(BTreeMap::new()),
         }
     }
@@ -149,13 +158,31 @@ impl SelectionHandler for DesktopSelectionHandler {
             .try_acquire_owned()
             .map_err(|_| SelectionHandlerError::Busy)?;
         let desktop = Arc::clone(&self.desktop);
-        let dialog = SourceDialog {
-            requester_name: peer.name().to_owned(),
-        };
-        let choice = tokio::task::spawn_blocking(move || desktop.choose_send_source(&dialog))
-            .await
-            .map_err(|_| SelectionHandlerError::Failed)?
-            .map_err(map_desktop_selection)?;
+        let source_directories = self.source_directories.clone();
+        let requester_name = peer.name().to_owned();
+        let choice = tokio::task::spawn_blocking(move || {
+            let initial_directory = source_directories
+                .load()
+                .ok()
+                .flatten()
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_default();
+            let dialog = SourceDialog {
+                requester_name,
+                initial_directory,
+            };
+            let choice = desktop.choose_send_source(&dialog)?;
+            if let Err(error) = source_directories.remember_choice(&choice) {
+                eprintln!(
+                    "Quick Share could not remember the source directory: {}",
+                    crate::terminal::terminal_safe(&error)
+                );
+            }
+            Ok::<SourceChoice, DesktopError>(choice)
+        })
+        .await
+        .map_err(|_| SelectionHandlerError::Failed)?
+        .map_err(map_desktop_selection)?;
         let paths = match choice {
             SourceChoice::Files(paths) if !paths.is_empty() => paths,
             SourceChoice::Folder(path) if !path.as_os_str().is_empty() => vec![path],
@@ -253,6 +280,7 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
     let selection_handler = Arc::new(DesktopSelectionHandler::new(
         Arc::clone(&desktop),
         Arc::clone(&callback_limit),
+        SourceDirectoryStore::new(dirs.data_dir().join("source-selection.json")),
     ));
     let selection = Arc::new(
         SelectionManager::new(
@@ -655,7 +683,11 @@ mod tests {
             authorization: AuthorizationChoice::AcceptAndTrust,
             source_calls: AtomicUsize::new(0),
         });
-        let handler = DesktopSelectionHandler::new(desktop.clone(), Arc::new(Semaphore::new(1)));
+        let handler = DesktopSelectionHandler::new(
+            desktop.clone(),
+            Arc::new(Semaphore::new(1)),
+            SourceDirectoryStore::new(root.path().join("source-selection.json")),
+        );
 
         assert_eq!(
             handler
