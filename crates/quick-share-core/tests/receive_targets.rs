@@ -349,7 +349,11 @@ proptest! {
         names in prop::collection::vec("[a-z][a-z0-9]{0,7}", 1..32)
     ) {
         let root = tempdir().expect("root");
-        let unique = names.into_iter().collect::<BTreeSet<_>>();
+        let unique = names
+            .into_iter()
+            .filter(|name| RelativePath::parse(format!("{name}.txt")).is_ok())
+            .collect::<BTreeSet<_>>();
+        prop_assume!(!unique.is_empty());
         let entries = unique
             .into_iter()
             .enumerate()
