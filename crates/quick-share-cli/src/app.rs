@@ -3,6 +3,7 @@
 use crate::{
     AgentIntent, AppError, CommandIntent, ConfigIntent, ConfigKey, DevicesIntent, IntentCommand,
     InteractionPolicy, ReceiveIntent, SendIntent, ServeIntent, UpdateIntent, UploadPassword,
+    configured_discovery::HybridDiscovery,
     devices::run_devices,
     orchestration::{
         DirectSendAdapter, DirectTarget, ReceiveOptions, ReceiveStartup, ReceiveTerminal,
@@ -240,7 +241,16 @@ async fn run_send(
         clipboard.as_mut().map(|value| value as &mut dyn Clipboard),
     )?;
     request.allow_http |= config.web.allow_http;
-    let discovery = MdnsDiscovery::new(config.discovery.include_virtual);
+    let discovery = HybridDiscovery::new(
+        config.discovery.include_virtual,
+        config.discovery.peers.clone(),
+        Arc::clone(&identity),
+        InfoRequest {
+            protocol_version: ProtocolVersion::V1_0,
+            capabilities: capabilities(),
+        },
+        Duration::from_millis(config.discovery.timeout_ms),
+    );
     let direct = ProductionDirect {
         identity: Arc::clone(&identity),
         trust_store: trust_store(dirs),
@@ -1446,6 +1456,16 @@ fn set_config_value(config: &mut AppConfig, key: ConfigKey, value: &str) -> Resu
         ConfigKey::DiscoveryIncludeVirtual => {
             config.discovery.include_virtual = parse_config_value(value, "boolean")?
         }
+        ConfigKey::DiscoveryPeers => {
+            config.discovery.peers = if value.is_empty() {
+                Vec::new()
+            } else {
+                value
+                    .split(',')
+                    .map(|peer| peer.trim().to_owned())
+                    .collect()
+            };
+        }
         ConfigKey::NetworkPort => config.network.port = parse_config_value(value, "port")?,
         ConfigKey::NetworkBind => config.network.bind = value.to_owned(),
         ConfigKey::TransferChunkSize => {
@@ -1547,7 +1567,9 @@ fn map_sender(error: quick_share_transfer::sender::SenderError) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_file, parse_web_duration};
+    use super::{looks_like_file, parse_web_duration, set_config_value};
+    use crate::ConfigKey;
+    use quick_share_core::config::AppConfig;
     use std::fs;
 
     #[test]
@@ -1560,6 +1582,24 @@ mod tests {
         let extensionless_file = root.path().join("existing-file");
         fs::write(&extensionless_file, b"occupied").expect("existing file");
         assert!(looks_like_file(&extensionless_file));
+    }
+
+    #[test]
+    fn configured_peer_list_parses_comma_separated_endpoints_and_can_be_cleared() {
+        let mut config = AppConfig::default();
+        set_config_value(
+            &mut config,
+            ConfigKey::DiscoveryPeers,
+            "192.168.1.20:4242, windows.local:4242",
+        )
+        .expect("configured peers");
+        assert_eq!(
+            config.discovery.peers,
+            ["192.168.1.20:4242", "windows.local:4242"]
+        );
+
+        set_config_value(&mut config, ConfigKey::DiscoveryPeers, "").expect("clear peers");
+        assert!(config.discovery.peers.is_empty());
     }
 
     #[test]

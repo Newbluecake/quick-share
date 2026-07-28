@@ -30,6 +30,13 @@ fn complete_command_tree_parses_into_execution_independent_intents() {
         vec!["quick-share", "config", "show"],
         vec!["quick-share", "config", "path"],
         vec!["quick-share", "config", "set", "device.name", "laptop"],
+        vec![
+            "quick-share",
+            "config",
+            "set",
+            "discovery.peers",
+            "192.168.1.20:4242,windows.local:4242",
+        ],
         vec!["quick-share", "update", "--check"],
         vec!["quick-share", "agent", "--port", "4242"],
         vec![

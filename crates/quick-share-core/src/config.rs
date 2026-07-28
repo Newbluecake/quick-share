@@ -2,7 +2,12 @@
 
 use quick_share_platform::{AppDirs, FileSensitivity, StorageError, atomic_write};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, io, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs, io,
+    net::SocketAddr,
+    path::PathBuf,
+};
 use thiserror::Error;
 
 /// Fully merged application configuration.
@@ -95,6 +100,8 @@ pub struct DiscoveryConfig {
     pub timeout_ms: u64,
     /// Whether virtual interfaces may be announced.
     pub include_virtual: bool,
+    /// Static `host:port` peers probed alongside mDNS discovery.
+    pub peers: Vec<String>,
 }
 
 impl Default for DiscoveryConfig {
@@ -102,6 +109,7 @@ impl Default for DiscoveryConfig {
         Self {
             timeout_ms: 1_800,
             include_virtual: false,
+            peers: Vec::new(),
         }
     }
 }
@@ -332,6 +340,20 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "discovery.timeout_ms must be positive".to_owned(),
         ));
     }
+    if config.discovery.peers.len() > 32 {
+        return Err(ConfigError::Validation(
+            "discovery.peers may contain at most 32 endpoints".to_owned(),
+        ));
+    }
+    let mut configured_peers = BTreeSet::new();
+    for peer in &config.discovery.peers {
+        validate_configured_peer(peer)?;
+        if !configured_peers.insert(peer.to_lowercase()) {
+            return Err(ConfigError::Validation(format!(
+                "discovery.peers contains duplicate endpoint {peer}"
+            )));
+        }
+    }
     if config.web.max_downloads == 0 {
         return Err(ConfigError::Validation(
             "web.max_downloads must be positive".to_owned(),
@@ -348,6 +370,34 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     Ok(())
+}
+
+fn validate_configured_peer(value: &str) -> Result<(), ConfigError> {
+    if value.is_empty()
+        || value != value.trim()
+        || value.len() > 512
+        || value.chars().any(char::is_control)
+    {
+        return Err(ConfigError::Validation(
+            "each discovery.peers entry must be a non-empty host:port without surrounding whitespace"
+                .to_owned(),
+        ));
+    }
+    if let Ok(address) = value.parse::<SocketAddr>() {
+        if address.port() != 0 {
+            return Ok(());
+        }
+    } else if let Some((host, port)) = value.rsplit_once(':')
+        && !host.is_empty()
+        && !host.chars().any(char::is_whitespace)
+        && !host.contains(':')
+        && port.parse::<u16>().is_ok_and(|port| port != 0)
+    {
+        return Ok(());
+    }
+    Err(ConfigError::Validation(format!(
+        "discovery peer {value} must be an IP:port, [IPv6]:port, or hostname:port"
+    )))
 }
 
 fn valid_duration(value: &str) -> bool {

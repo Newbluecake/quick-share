@@ -153,9 +153,14 @@ quick-share config show
 quick-share config path
 quick-share config set device.name workstation
 quick-share config set receive.output ~/Downloads/received
+quick-share config set discovery.peers 192.168.1.20:4242
+# 多个静态 peer 使用逗号分隔；传入空字符串可清空：
+quick-share config set discovery.peers 'host-a:4242,host-b:4242'
 ```
 
 配置优先级依次为：命令行、环境变量、TOML 文件、内置默认值。身份信息与信任状态单独存储，并使用私有权限保护。
+
+`discovery.peers` 中的 `host:port` 会与 mDNS 同时并行探测，适合 mDNS 被 Public 防火墙或跨网段网络阻断的环境。探测使用完整 Noise/QSP 握手，只把实际可用且协议兼容的设备加入选择列表，并按认证身份与 mDNS 结果去重；它不会建立信任或绕过后续身份确认。
 
 ### 签名自更新
 

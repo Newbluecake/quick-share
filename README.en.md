@@ -153,9 +153,14 @@ quick-share config show
 quick-share config path
 quick-share config set device.name workstation
 quick-share config set receive.output ~/Downloads/received
+quick-share config set discovery.peers 192.168.1.20:4242
+# Separate multiple static peers with commas; an empty string clears the list:
+quick-share config set discovery.peers 'host-a:4242,host-b:4242'
 ```
 
 Configuration precedence is command line, environment, TOML file, then built-in defaults. Identity and trust state are stored separately with private permissions.
+
+The `host:port` entries in `discovery.peers` are probed in parallel with mDNS, which is useful when a Public-profile firewall or routed network blocks multicast discovery. Probes perform a complete Noise/QSP handshake, add only reachable protocol-compatible devices, and de-duplicate them against mDNS by authenticated identity; they neither establish trust nor bypass the later identity confirmation.
 
 ### Signed self-update
 

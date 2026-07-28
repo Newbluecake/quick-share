@@ -4,6 +4,7 @@
 #[cfg(windows)]
 mod agent;
 pub mod app;
+mod configured_discovery;
 #[cfg(any(windows, test))]
 #[cfg_attr(not(windows), allow(dead_code))]
 mod desktop_prompt;
@@ -432,6 +433,8 @@ pub enum ConfigKey {
     DiscoveryTimeoutMs,
     #[value(name = "discovery.include-virtual")]
     DiscoveryIncludeVirtual,
+    #[value(name = "discovery.peers")]
+    DiscoveryPeers,
     #[value(name = "network.port")]
     NetworkPort,
     #[value(name = "network.bind")]

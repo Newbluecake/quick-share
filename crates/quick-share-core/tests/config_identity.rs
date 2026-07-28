@@ -17,6 +17,7 @@ fn configuration_priority_is_cli_then_environment_then_toml_then_defaults() {
         name = "from-toml"
         [discovery]
         timeout_ms = 4000
+        peers = ["192.168.32.38:4242", "windows.local:4242"]
         [web]
         max_downloads = 5
     "#;
@@ -40,8 +41,36 @@ fn configuration_priority_is_cli_then_environment_then_toml_then_defaults() {
     // Assert
     assert_eq!(config.device.name, "from-toml");
     assert_eq!(config.discovery.timeout_ms, 900);
+    assert_eq!(
+        config.discovery.peers,
+        ["192.168.32.38:4242", "windows.local:4242"]
+    );
     assert_eq!(config.web.max_downloads, 8);
     assert_eq!(config.receive.output, dirs.download_dir());
+}
+
+#[test]
+fn configured_discovery_peers_reject_empty_duplicate_and_unbounded_lists() {
+    let root = tempdir().expect("temporary root");
+    let loader = ConfigLoader::new(AppDirs::for_test(root.path()));
+    let load = |peers: &str| {
+        loader.load_from_str(
+            Some(&format!("[discovery]\npeers = {peers}")),
+            &BTreeMap::new(),
+            &ConfigOverrides::default(),
+        )
+    };
+
+    assert!(load("[\"\"]").is_err());
+    assert!(load("[\"host:4242\", \"HOST:4242\"]").is_err());
+    let too_many = format!(
+        "[{}]",
+        (0..33)
+            .map(|index| format!("\"host{index}:4242\""))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    assert!(load(&too_many).is_err());
 }
 
 #[test]

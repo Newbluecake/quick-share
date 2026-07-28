@@ -3,12 +3,16 @@
 use crate::{
     AppError, InteractionPolicy, ReceiveIntent,
     app::{load_identity, resolve_bind_ip, trust_store},
+    configured_discovery::HybridDiscovery,
     orchestration::{ReceiveStartup, ReceiveTerminal, SendTerminal},
     terminal::ConsoleTerminal,
 };
 use async_trait::async_trait;
-use quick_share_core::{config::AppConfig, identity::TrustStatus};
-use quick_share_discovery::{Discovery, MdnsDiscovery, ScanRequest, UnverifiedPeer};
+use quick_share_core::{
+    config::AppConfig,
+    identity::{DeviceIdentity, TrustStatus},
+};
+use quick_share_discovery::{Discovery, ScanRequest, UnverifiedPeer};
 use quick_share_platform::AppDirs;
 use quick_share_protocol::{
     Capability, DeviceId, DeviceInfo, InfoRequest, InfoResponse, OfferDecision, ProtocolVersion,
@@ -106,7 +110,7 @@ pub(crate) async fn run_remote_receive(
 
     let target = resolve_target(
         intent.peer.as_deref(),
-        &identity.device_id(),
+        Arc::clone(&identity),
         &trust,
         config,
         terminal,
@@ -323,7 +327,7 @@ pub(crate) async fn run_remote_receive(
 
 async fn resolve_target(
     requested: Option<&str>,
-    local_device_id: &DeviceId,
+    identity: Arc<DeviceIdentity>,
     trust: &quick_share_core::identity::TrustedDeviceStore,
     config: &AppConfig,
     terminal: ConsoleTerminal,
@@ -346,13 +350,26 @@ async fn resolve_target(
             advertised_fingerprint: None,
         });
     }
-    let scan = MdnsDiscovery::new(config.discovery.include_virtual)
+    let discovery = HybridDiscovery::new(
+        config.discovery.include_virtual,
+        config.discovery.peers.clone(),
+        identity.clone(),
+        InfoRequest {
+            protocol_version: ProtocolVersion::V1_1,
+            capabilities: remote_receive_capabilities(),
+        },
+        Duration::from_millis(config.discovery.timeout_ms),
+    );
+    let scan = discovery
         .scan(ScanRequest {
-            local_device_id: local_device_id.clone(),
+            local_device_id: identity.device_id(),
             timeout: Duration::from_millis(config.discovery.timeout_ms),
         })
         .await
         .map_err(|error| AppError::Network(error.to_string()))?;
+    for warning in scan.warnings {
+        ReceiveTerminal::warning(&terminal, &warning);
+    }
     let mut peers = scan
         .peers
         .into_iter()
