@@ -223,14 +223,15 @@ main() {
         return 1
     }
 
-    local os arch target name root temporary candidate checksums signature
+    local os arch target name root temporary candidate checksums signature cleanup_command
     os="$(detect_os)"
     arch="$(detect_arch)"
     target="$(resolve_target "$os" "$arch")"
     name="$(asset_name "$target")"
     root="$(release_download_root "$version")"
     temporary="$(mktemp -d "${TMPDIR:-/tmp}/quick-share-install.XXXXXX")"
-    trap 'rm -rf "$temporary"' EXIT
+    printf -v cleanup_command 'rm -rf -- %q' "$temporary"
+    trap "$cleanup_command" EXIT
     candidate="${temporary}/${name}"
     checksums="${temporary}/SHA256SUMS"
     signature="${temporary}/SHA256SUMS.sig"
@@ -246,6 +247,8 @@ main() {
         create_aliases "$install_dir"
     fi
     info "Installed $($install_dir/quick-share --version) at $install_dir/quick-share"
+    rm -rf -- "$temporary"
+    trap - EXIT
 }
 
 if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then

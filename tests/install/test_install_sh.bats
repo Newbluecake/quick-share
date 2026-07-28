@@ -72,6 +72,29 @@ teardown() {
     ! find "$TEST_DIR/bin" -name '.quick-share.new.*' | grep -q .
 }
 
+@test "successful main installation cleans temporary state and exits zero" {
+    run bash -c '
+        set -Eeuo pipefail
+        source "$1"
+        download_file() {
+            local destination="$2"
+            case "$destination" in
+                */quick-share-*)
+                    printf "#!/usr/bin/env bash\necho quick-share 9.9.9\n" > "$destination"
+                    chmod +x "$destination"
+                    ;;
+                *) printf placeholder > "$destination" ;;
+            esac
+        }
+        verify_signature_if_available() { :; }
+        verify_checksum() { :; }
+        main --version 9.9.9 --install-dir "$2" --no-aliases
+        "$2/quick-share" --version
+    ' _ "$INSTALL_SCRIPT" "$TEST_DIR/bin"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"quick-share 9.9.9"* ]]
+}
+
 @test "installer has no Python or pip runtime dependency" {
     ! grep -Eqi 'python|pip install|pyinstaller' "$INSTALL_SCRIPT"
 }
