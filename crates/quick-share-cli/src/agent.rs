@@ -8,6 +8,7 @@ use crate::{
     },
     desktop_prompt::{
         AgentReceiver, DesktopOfferPrompt, SourceDirectoryStore, callback_notification,
+        incoming_transfer_notification,
     },
 };
 use async_trait::async_trait;
@@ -428,7 +429,6 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
                         receiver.cleanup(transfer_id)
                             .map_err(|error| AppError::Filesystem(error.to_string()))?;
                         eprintln!("Incoming transfer completed: {}", transfer_id.as_uuid());
-                        notify_desktop(Arc::clone(&desktop), "Transfer completed.").await;
                     }
                     Ok(ServerSessionOutcome::SelectionReady {
                         request_id,
@@ -469,6 +469,9 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
                     Ok(ServerSessionOutcome::TransferCancelled { transfer_id, .. }) => {
                         let _ = receiver.cleanup(transfer_id);
                         eprintln!("Transfer cancelled: {}", transfer_id.as_uuid());
+                        if let Some(notification) = incoming_transfer_notification(false) {
+                            notify_desktop(Arc::clone(&desktop), notification).await;
+                        }
                     }
                     Ok(ServerSessionOutcome::SelectionFinished { status, .. }) => {
                         eprintln!("Remote source request finished: {status:?}");

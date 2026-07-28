@@ -590,6 +590,10 @@ pub(crate) fn callback_notification(succeeded: bool) -> Option<&'static str> {
     (!succeeded).then_some("Selected content could not be sent.")
 }
 
+pub(crate) fn incoming_transfer_notification(succeeded: bool) -> Option<&'static str> {
+    (!succeeded).then_some("Incoming transfer could not be received.")
+}
+
 fn map_desktop_direct(error: DesktopError) -> DirectError {
     match error {
         DesktopError::Busy => {
@@ -853,6 +857,15 @@ mod tests {
         assert_eq!(
             super::callback_notification(false),
             Some("Selected content could not be sent.")
+        );
+    }
+
+    #[test]
+    fn successful_incoming_transfer_is_silent_and_failure_requires_attention() {
+        assert_eq!(super::incoming_transfer_notification(true), None);
+        assert_eq!(
+            super::incoming_transfer_notification(false),
+            Some("Incoming transfer could not be received.")
         );
     }
 
