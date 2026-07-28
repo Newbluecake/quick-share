@@ -17,7 +17,10 @@ tempfile.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+rfd.workspace = true
+tray-icon-win.workspace = true
 windows-permissions = "0.2.4"
+winit.workspace = true
 
 [lints]
 workspace = true

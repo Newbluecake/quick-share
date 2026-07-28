@@ -2,6 +2,7 @@
 //! Cross-platform adapters for directories, permissions, clipboard, and atomic files.
 
 pub mod clipboard;
+pub mod desktop;
 pub mod encoding;
 pub mod network;
 
