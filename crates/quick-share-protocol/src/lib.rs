@@ -42,6 +42,8 @@ pub struct ProtocolVersion {
 impl ProtocolVersion {
     /// QSP 1.0.
     pub const V1_0: Self = Self::new(1, 0);
+    /// QSP 1.1 with authenticated remote source-selection control messages.
+    pub const V1_1: Self = Self::new(1, 1);
 
     /// Creates a protocol version.
     #[must_use]
@@ -67,6 +69,8 @@ pub enum Capability {
     Resume,
     /// Symbolic-link metadata.
     Symlinks,
+    /// Authenticated request for the peer to select local source content.
+    RemoteSelection,
 }
 
 /// Result of version and capability negotiation.
@@ -95,15 +99,21 @@ pub fn negotiate(
         ));
     }
 
+    let version = ProtocolVersion::new(
+        local_version.major,
+        local_version.minor.min(remote_version.minor),
+    );
+    let mut capabilities = local_capabilities
+        .intersection(remote_capabilities)
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if version < ProtocolVersion::V1_1 {
+        capabilities.remove(&Capability::RemoteSelection);
+    }
+
     Ok(NegotiatedProtocol {
-        version: ProtocolVersion::new(
-            local_version.major,
-            local_version.minor.min(remote_version.minor),
-        ),
-        capabilities: local_capabilities
-            .intersection(remote_capabilities)
-            .copied()
-            .collect(),
+        version,
+        capabilities,
     })
 }
 
@@ -166,6 +176,8 @@ pub enum MessageType {
     TransferComplete = 8,
     TransferCancel = 9,
     ProtocolError = 10,
+    SourceSelectionRequest = 11,
+    SourceSelectionResponse = 12,
 }
 
 impl TryFrom<u8> for MessageType {
@@ -183,6 +195,8 @@ impl TryFrom<u8> for MessageType {
             8 => Ok(Self::TransferComplete),
             9 => Ok(Self::TransferCancel),
             10 => Ok(Self::ProtocolError),
+            11 => Ok(Self::SourceSelectionRequest),
+            12 => Ok(Self::SourceSelectionResponse),
             _ => Err(ValidationError::UnknownMessageType),
         }
     }
@@ -560,6 +574,87 @@ impl InfoResponse {
     }
 }
 
+/// Builds a version-compatible INFO response without exposing QSP/1.1-only
+/// capabilities to a strict QSP/1.0 decoder.
+pub fn compatible_info_response(
+    local_version: ProtocolVersion,
+    mut local_device: DeviceInfo,
+    request: &InfoRequest,
+) -> Result<InfoResponse, ProtocolError> {
+    local_device.validate().map_err(|error| {
+        ProtocolError::new(
+            ErrorCode::InvalidMessage,
+            format!("local device information is invalid: {error}"),
+        )
+    })?;
+    let negotiated = negotiate(
+        local_version,
+        &local_device.capabilities,
+        request.protocol_version,
+        &request.capabilities,
+    )?;
+    if negotiated.version < ProtocolVersion::V1_1 {
+        local_device
+            .capabilities
+            .remove(&Capability::RemoteSelection);
+    }
+    Ok(InfoResponse {
+        protocol_version: negotiated.version,
+        device: local_device,
+    })
+}
+
+/// Authenticated request for the peer to choose source content and call back
+/// to the requester's observed network address on a bounded non-zero port.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceSelectionRequest {
+    pub requester: DeviceInfo,
+    pub callback_port: u16,
+}
+
+impl SourceSelectionRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        self.requester.validate()?;
+        if self.callback_port == 0 {
+            return Err(ValidationError::InvalidCallbackPort);
+        }
+        Ok(())
+    }
+}
+
+/// Stable terminal result of one source-selection request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSelectionStatus {
+    Ready,
+    Cancelled,
+    Rejected,
+    Busy,
+    UiUnavailable,
+    Expired,
+    Failed,
+}
+
+/// Correlated response. Only `ready` may expose the transfer ID that must
+/// appear in the authenticated callback offer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceSelectionResponse {
+    pub status: SourceSelectionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer_id: Option<TransferId>,
+}
+
+impl SourceSelectionResponse {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if (self.status == SourceSelectionStatus::Ready) != self.transfer_id.is_some() {
+            return Err(ValidationError::InvalidSelectionState);
+        }
+        Ok(())
+    }
+}
+
 /// A transfer offer sent before any payload is authorized.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -568,6 +663,9 @@ pub struct TransferOffer {
     pub protocol_version: ProtocolVersion,
     /// Random transfer identifier.
     pub transfer_id: TransferId,
+    /// Remote-selection request that authorized this callback offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initiated_by: Option<RequestId>,
     /// Sender display and capability information.
     pub sender: DeviceInfo,
     /// Top-level payload category.
@@ -1087,6 +1185,12 @@ pub enum ValidationError {
     /// Protocol error text is empty, too long, or contains terminal controls.
     #[error("protocol error message is invalid")]
     InvalidErrorMessage,
+    /// Remote selection requested an unusable callback port.
+    #[error("source-selection callback port must be non-zero")]
+    InvalidCallbackPort,
+    /// Selection response status and transfer ID are inconsistent.
+    #[error("source-selection response has an invalid terminal state")]
+    InvalidSelectionState,
     /// Message kind byte is not assigned by QSP/1.
     #[error("unknown QSP message type")]
     UnknownMessageType,

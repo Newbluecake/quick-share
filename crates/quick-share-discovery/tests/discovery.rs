@@ -23,6 +23,7 @@ fn advertisement() -> Advertisement {
             Capability::Files,
             Capability::Directories,
             Capability::Resume,
+            Capability::RemoteSelection,
         ]),
         static_key_fingerprint: [7; 32],
         port: 4242,
@@ -40,6 +41,8 @@ fn txt_record_round_trip_is_bounded_and_removes_control_characters() {
     assert_eq!(decoded.name, "laptopname");
     assert_eq!(decoded.port, 4242);
     assert!(decoded.capabilities.contains(&Capability::Resume));
+    assert!(!decoded.capabilities.contains(&Capability::RemoteSelection));
+    assert!(!encoded["caps"].contains("remote"));
     assert!(encoded.values().all(|value| value.len() <= 255));
 }
 

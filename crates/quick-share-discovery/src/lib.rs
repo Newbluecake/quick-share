@@ -163,12 +163,15 @@ fn parse_version(value: &str) -> Result<ProtocolVersion, DiscoveryError> {
 fn encode_capabilities(values: &Capabilities) -> String {
     values
         .iter()
-        .map(|capability| match capability {
-            Capability::Files => "files",
-            Capability::Directories => "dirs",
-            Capability::Text => "text",
-            Capability::Resume => "resume",
-            Capability::Symlinks => "symlinks",
+        .filter_map(|capability| match capability {
+            Capability::Files => Some("files"),
+            Capability::Directories => Some("dirs"),
+            Capability::Text => Some("text"),
+            Capability::Resume => Some("resume"),
+            Capability::Symlinks => Some("symlinks"),
+            // QSP/1.0 discovery decoders reject unknown capability strings.
+            // Remote selection is disclosed only by a version-tailored INFO response.
+            Capability::RemoteSelection => None,
         })
         .collect::<Vec<_>>()
         .join(",")

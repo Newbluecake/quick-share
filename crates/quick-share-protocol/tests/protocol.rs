@@ -4,8 +4,10 @@ use quick_share_protocol::{
     DeviceInfo, EntryId, EntryTransferStatus, ErrorCode, InfoRequest, InfoResponse,
     MAX_CHUNK_FRAME_BYTES, MAX_MANIFEST_ENTRIES, ManifestEntry, ManifestEntryKind, MessageType,
     MissingChunkBitmap, OfferCreate, OfferDecision, OfferStatusRequest, OfferStatusResponse,
-    ProtocolError, ProtocolVersion, RejectionReason, TransferComplete, TransferId, TransferOffer,
-    TransferStatus, TransferStatusResponse, ValidationError, decode_offer, negotiate,
+    ProtocolError, ProtocolVersion, RejectionReason, RequestId, SourceSelectionRequest,
+    SourceSelectionResponse, SourceSelectionStatus, TransferComplete, TransferId, TransferOffer,
+    TransferStatus, TransferStatusResponse, ValidationError, compatible_info_response,
+    decode_offer, negotiate,
 };
 use std::collections::BTreeSet;
 use uuid::Uuid;
@@ -14,6 +16,7 @@ fn valid_offer() -> TransferOffer {
     TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id: TransferId::new(Uuid::now_v7()),
+        initiated_by: None,
         sender: DeviceInfo {
             device_id: DeviceId::parse("qs_0123456789abcdef0123456789abcdef")
                 .expect("valid device ID"),
@@ -75,8 +78,16 @@ fn negotiation_rejects_different_major_versions() {
 #[test]
 fn negotiation_uses_lower_minor_and_capability_intersection() {
     // Arrange
-    let local = BTreeSet::from([Capability::Files, Capability::Resume]);
-    let remote = BTreeSet::from([Capability::Files, Capability::Text]);
+    let local = BTreeSet::from([
+        Capability::Files,
+        Capability::Resume,
+        Capability::RemoteSelection,
+    ]);
+    let remote = BTreeSet::from([
+        Capability::Files,
+        Capability::Text,
+        Capability::RemoteSelection,
+    ]);
 
     // Act
     let negotiated = negotiate(
@@ -89,7 +100,20 @@ fn negotiation_uses_lower_minor_and_capability_intersection() {
 
     // Assert
     assert_eq!(negotiated.version, ProtocolVersion::new(1, 1));
-    assert_eq!(negotiated.capabilities, BTreeSet::from([Capability::Files]));
+    assert_eq!(
+        negotiated.capabilities,
+        BTreeSet::from([Capability::Files, Capability::RemoteSelection])
+    );
+
+    let downgraded = negotiate(
+        ProtocolVersion::V1_1,
+        &local,
+        ProtocolVersion::V1_0,
+        &remote,
+    )
+    .expect("QSP/1.0 should downgrade");
+    assert_eq!(downgraded.version, ProtocolVersion::V1_0);
+    assert_eq!(downgraded.capabilities, BTreeSet::from([Capability::Files]));
 }
 
 #[test]
@@ -268,6 +292,117 @@ fn info_and_offer_control_types_are_strict_and_message_codes_are_stable() {
         "bypass": true
     });
     assert!(serde_json::from_value::<InfoRequest>(unknown).is_err());
+}
+
+#[test]
+fn qsp_1_1_selection_messages_are_strict_correlated_and_stable() {
+    // Arrange
+    let offer = valid_offer();
+    let request_id = RequestId::new(Uuid::now_v7());
+    let request = SourceSelectionRequest {
+        requester: offer.sender.clone(),
+        callback_port: 4242,
+    };
+    let ready = SourceSelectionResponse {
+        status: SourceSelectionStatus::Ready,
+        transfer_id: Some(offer.transfer_id),
+    };
+
+    // Act + Assert
+    assert_eq!(ProtocolVersion::V1_1, ProtocolVersion::new(1, 1));
+    assert_eq!(request.validate(), Ok(()));
+    assert_eq!(ready.validate(), Ok(()));
+    assert_eq!(MessageType::SourceSelectionRequest as u8, 11);
+    assert_eq!(MessageType::SourceSelectionResponse as u8, 12);
+    assert_eq!(
+        MessageType::try_from(11).expect("selection request"),
+        MessageType::SourceSelectionRequest
+    );
+    let request_value = serde_json::to_value(&request).expect("request JSON");
+    assert_eq!(request_value["callbackPort"], 4242);
+    let ready_value = serde_json::to_value(&ready).expect("response JSON");
+    assert_eq!(ready_value["status"], "ready");
+    assert_eq!(
+        serde_json::from_value::<SourceSelectionResponse>(ready_value).expect("response"),
+        ready
+    );
+
+    let mut correlated = offer.clone();
+    correlated.initiated_by = Some(request_id);
+    let correlated_value = serde_json::to_value(&correlated).expect("correlated offer JSON");
+    assert!(correlated_value.get("initiatedBy").is_some());
+    let ordinary_value = serde_json::to_value(&offer).expect("ordinary offer JSON");
+    assert!(ordinary_value.get("initiatedBy").is_none());
+
+    assert_eq!(
+        SourceSelectionRequest {
+            callback_port: 0,
+            ..request.clone()
+        }
+        .validate(),
+        Err(ValidationError::InvalidCallbackPort)
+    );
+    assert_eq!(
+        SourceSelectionResponse {
+            status: SourceSelectionStatus::Ready,
+            transfer_id: None,
+        }
+        .validate(),
+        Err(ValidationError::InvalidSelectionState)
+    );
+    for status in [
+        SourceSelectionStatus::Cancelled,
+        SourceSelectionStatus::Rejected,
+        SourceSelectionStatus::Busy,
+        SourceSelectionStatus::UiUnavailable,
+        SourceSelectionStatus::Expired,
+        SourceSelectionStatus::Failed,
+    ] {
+        assert_eq!(
+            SourceSelectionResponse {
+                status,
+                transfer_id: Some(offer.transfer_id),
+            }
+            .validate(),
+            Err(ValidationError::InvalidSelectionState)
+        );
+    }
+}
+
+#[test]
+fn info_response_hides_remote_selection_from_qsp_1_0_peers() {
+    // Arrange
+    let offer = valid_offer();
+    let mut local = offer.sender;
+    local.capabilities.insert(Capability::RemoteSelection);
+    let old_request = InfoRequest {
+        protocol_version: ProtocolVersion::V1_0,
+        capabilities: BTreeSet::from([Capability::Files]),
+    };
+    let new_request = InfoRequest {
+        protocol_version: ProtocolVersion::V1_1,
+        capabilities: BTreeSet::from([Capability::Files]),
+    };
+
+    // Act
+    let old = compatible_info_response(ProtocolVersion::V1_1, local.clone(), &old_request)
+        .expect("QSP/1.0 response");
+    let new = compatible_info_response(ProtocolVersion::V1_1, local, &new_request)
+        .expect("QSP/1.1 response");
+
+    // Assert
+    assert_eq!(old.protocol_version, ProtocolVersion::V1_0);
+    assert!(
+        !old.device
+            .capabilities
+            .contains(&Capability::RemoteSelection)
+    );
+    assert_eq!(new.protocol_version, ProtocolVersion::V1_1);
+    assert!(
+        new.device
+            .capabilities
+            .contains(&Capability::RemoteSelection)
+    );
 }
 
 #[test]
