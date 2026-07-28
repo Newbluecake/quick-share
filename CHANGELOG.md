@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-28
+
+### Added
+- QSP/1.1 remote source selection: Linux can use `rc` or `receive --request` to ask a Windows desktop agent to select multiple files or a folder and send them back over an authenticated, correlated callback transfer.
+- Native Windows desktop agent with authorization, source selection, receive-directory and conflict dialogs, a tray lifecycle, bounded single-flight UI dispatch, and console lifecycle/transfer logs.
+- Persistent destination planning and routed receive bindings with per-entry overwrite, skip, rename, file/directory apply-all, commit-race recovery, resume-safe output roots, and empty-directory preservation.
+- Hybrid discovery that probes configured `discovery.peers` through a complete Noise/QSP handshake alongside mDNS, merges peers by authenticated identity, and reports unavailable or incompatible configured endpoints.
+- Persistent Windows source-picker directory: the next picker opens in the parent of the last successful file or folder selection, while cancellation and stale paths safely preserve or discard the preference.
+
+### Changed
+- `rc` now directly requests remote content; the full `quick-share receive` command retains passive-listener behavior.
+- Remote pulls without `--output` now use the invocation's current directory, while passive receive and agent-side incoming sends retain the configured Downloads destination.
+- A sole reachable peer is selected automatically; multiple peers still require explicit selection, and unknown identities still require SAS/desktop authorization.
+- Successful Windows callback sends are silent in the desktop UI and logged to the console; failures continue to display an error dialog.
+
+### Fixed
+- Interactive SAS approval now persists the receiver's complete authenticated static key, avoiding repeated prompts; non-interactive `--yes` remains accept-once and never establishes trust.
+- Windows signed-fixture and release-workflow tests now preserve binary signatures and accept platform line endings.
+- Hidden-owner Windows dialogs no longer render as blank windows or terminate the resident agent when closed.
+
+### Security
+- Remote selection is available only after QSP/1.1 capability negotiation inside Noise XX; generic QSP/1.0 control paths cannot encode or decode the new messages.
+- Callback authorization is one-shot and exactly binds request ID, transfer ID, DeviceId, complete static key, authenticated source IP, and expiry; callback IP is never accepted from an untrusted wire claim.
+- Remembered receive destinations remain bound to complete trusted identities, and identity/name changes fail closed without inheriting trust or destination state.
+
 ## [2.0.0] - 2026-07-27
 
 ### Added
@@ -308,7 +333,8 @@ See `docs/migration-v2.md` for command changes, configuration migration, and rol
 - Basename-only file access enforcement
 - No directory listing exposure
 
-[Unreleased]: https://github.com/Newbluecake/quick-share/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/Newbluecake/quick-share/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.0.0
 [1.0.12]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.12
 [1.0.11]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.11
