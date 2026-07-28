@@ -5,6 +5,7 @@ members = [
     "web-tls",
     "resume",
     "clipboard",
+    "windows-desktop",
 ]
 resolver = "2"
 

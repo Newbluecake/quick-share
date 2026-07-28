@@ -20,6 +20,7 @@ application workspace.
 - `web-tls`: temporary self-signed HTTPS page and QR experiment.
 - `resume`: chunk journal, crash injection, resume, and atomic-finalize experiment.
 - `clipboard`: native clipboard capability probe with safe fallback reporting.
+- `windows-desktop`: Windows native dialog, tray, owner-window, and UI-thread probe.
 
 Build all experiments:
 
