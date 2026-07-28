@@ -7,7 +7,7 @@ Usage: scripts/release/release.sh <version> [options]
 
 Options:
   --dry-run       Validate and print the release plan without modifying files
-  --changelog     Update Cargo.toml, Cargo.lock, and CHANGELOG.md only
+  --changelog     Update Cargo.toml, lockfiles, and CHANGELOG.md only
   --skip-tests    Skip local quality gates (GitHub release CI still enforces them)
   --skip-push     Create the release commit and annotated tag locally only
   --no-sync-dev   Accepted for compatibility; this repository has no required dev sync
@@ -182,8 +182,11 @@ awk -v version="$version" -v add_link="$has_version_link" '
 ' CHANGELOG.md > "$changelog_tmp"
 mv "$changelog_tmp" CHANGELOG.md
 
-# Cargo.toml is the sole package version source. Regenerate only Cargo.lock metadata.
+# Cargo.toml is the sole package version source. Regenerate workspace lock metadata.
 cargo check --workspace >/dev/null
+if [[ -f fuzz/Cargo.toml ]]; then
+    cargo check --manifest-path fuzz/Cargo.toml >/dev/null
+fi
 
 grep -Fq "version = \"$version\"" Cargo.toml
 grep -Fq "## [$version]" CHANGELOG.md
@@ -198,6 +201,9 @@ if ! $skip_tests; then
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     cargo test --workspace --all-targets --all-features --locked
+    if [[ -f fuzz/Cargo.toml ]]; then
+        cargo check --manifest-path fuzz/Cargo.toml --locked
+    fi
     cargo audit
     scripts/release/check-signing-key.sh
     if command -v cargo-deny >/dev/null || cargo deny --version >/dev/null 2>&1; then
@@ -209,6 +215,7 @@ if ! $skip_tests; then
 fi
 
 git add Cargo.toml Cargo.lock CHANGELOG.md
+[[ ! -f fuzz/Cargo.lock ]] || git add fuzz/Cargo.lock
 if git diff --cached --quiet; then
     echo "Version and changelog were already prepared; tagging the current HEAD."
 else
