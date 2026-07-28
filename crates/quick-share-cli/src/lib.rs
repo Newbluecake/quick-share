@@ -4,7 +4,8 @@
 #[cfg(windows)]
 mod agent;
 pub mod app;
-#[cfg(windows)]
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
 mod desktop_prompt;
 pub mod devices;
 pub mod orchestration;

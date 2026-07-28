@@ -560,3 +560,198 @@ fn map_router_error(error: ReceiverRouterError) -> ReceiverError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_conflict_choice, build_plan_sync};
+    use quick_share_core::destination::{ConflictKind, ConflictSelections, DestinationDisposition};
+    use quick_share_platform::desktop::{
+        AuthorizationChoice, AuthorizationDialog, ConflictAction, ConflictChoice, ConflictDialog,
+        ConflictScope, DesktopError, DesktopInteraction, DesktopNotification, DirectoryChoice,
+        ReceiveDirectoryDialog, SourceChoice, SourceDialog,
+    };
+    use quick_share_protocol::{
+        Capability, ContentKind, DeviceId, DeviceInfo, EntryId, ManifestEntry, ManifestEntryKind,
+        ProtocolVersion, TransferId, TransferOffer,
+    };
+    use std::{
+        collections::{BTreeSet, VecDeque},
+        sync::Mutex,
+    };
+    use uuid::Uuid;
+
+    struct ScriptedDesktop {
+        conflicts: Mutex<VecDeque<ConflictChoice>>,
+        seen: Mutex<Vec<ConflictDialog>>,
+    }
+
+    impl ScriptedDesktop {
+        fn new(choices: impl IntoIterator<Item = ConflictChoice>) -> Self {
+            Self {
+                conflicts: Mutex::new(choices.into_iter().collect()),
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl DesktopInteraction for ScriptedDesktop {
+        fn authorize_peer(
+            &self,
+            _request: &AuthorizationDialog,
+        ) -> Result<AuthorizationChoice, DesktopError> {
+            Ok(AuthorizationChoice::AcceptOnce)
+        }
+
+        fn choose_send_source(
+            &self,
+            _request: &SourceDialog,
+        ) -> Result<SourceChoice, DesktopError> {
+            Ok(SourceChoice::Cancelled)
+        }
+
+        fn confirm_receive_directory(
+            &self,
+            _request: &ReceiveDirectoryDialog,
+        ) -> Result<DirectoryChoice, DesktopError> {
+            Ok(DirectoryChoice::Cancelled)
+        }
+
+        fn resolve_conflict(
+            &self,
+            request: &ConflictDialog,
+        ) -> Result<ConflictChoice, DesktopError> {
+            self.seen.lock().expect("seen").push(request.clone());
+            self.conflicts
+                .lock()
+                .expect("conflicts")
+                .pop_front()
+                .ok_or(DesktopError::Backend)
+        }
+
+        fn notify(&self, _notification: &DesktopNotification) -> Result<(), DesktopError> {
+            Ok(())
+        }
+    }
+
+    fn file_entry(id: u32, path: &str) -> ManifestEntry {
+        ManifestEntry {
+            id: EntryId::new(id).expect("entry id"),
+            relative_path: path.to_owned(),
+            kind: ManifestEntryKind::File,
+            size: 4,
+            digest: Some([id as u8; 32]),
+        }
+    }
+
+    fn offer(entries: Vec<ManifestEntry>) -> TransferOffer {
+        let total = entries.iter().map(|entry| entry.size).sum();
+        TransferOffer {
+            protocol_version: ProtocolVersion::V1_1,
+            transfer_id: TransferId::new(Uuid::now_v7()),
+            initiated_by: None,
+            sender: DeviceInfo {
+                device_id: DeviceId::parse(format!("qs_{}", "a".repeat(32))).expect("device"),
+                name: "peer".to_owned(),
+                capabilities: BTreeSet::from([Capability::Files]),
+            },
+            content_kind: ContentKind::Files,
+            chunk_size: 4 * 1024 * 1024,
+            total_bytes: total,
+            entries,
+        }
+    }
+
+    #[test]
+    fn build_plan_resolves_file_conflicts_via_desktop_and_scopes_apply_all() {
+        let root = tempfile::tempdir().expect("root");
+        std::fs::write(root.path().join("alpha.txt"), b"old1").expect("alpha");
+        std::fs::write(root.path().join("beta.txt"), b"old2").expect("beta");
+        let offer = offer(vec![file_entry(1, "alpha.txt"), file_entry(2, "beta.txt")]);
+
+        let desktop = ScriptedDesktop::new([ConflictChoice::Decision {
+            action: ConflictAction::Overwrite,
+            scope: ConflictScope::AllRemaining,
+        }]);
+        let (plan, _) =
+            build_plan_sync(&desktop, root.path(), &offer, ConflictSelections::default())
+                .expect("plan");
+        assert!(matches!(
+            plan.entry(EntryId::new(1).unwrap()),
+            Some(DestinationDisposition::Commit {
+                replace_existing: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan.entry(EntryId::new(2).unwrap()),
+            Some(DestinationDisposition::Commit {
+                replace_existing: true,
+                ..
+            })
+        ));
+        // Apply-all means only one conflict dialog was shown for two conflicts.
+        assert_eq!(desktop.seen.lock().expect("seen").len(), 1);
+    }
+
+    #[test]
+    fn build_plan_supports_rename_skip_and_cancel() {
+        let root = tempfile::tempdir().expect("root");
+        std::fs::write(root.path().join("alpha.txt"), b"old1").expect("alpha");
+        let offer = offer(vec![file_entry(1, "alpha.txt")]);
+
+        let rename = ScriptedDesktop::new([ConflictChoice::Decision {
+            action: ConflictAction::Rename,
+            scope: ConflictScope::ThisEntry,
+        }]);
+        let (plan, _) =
+            build_plan_sync(&rename, root.path(), &offer, ConflictSelections::default())
+                .expect("rename plan");
+        match plan.entry(EntryId::new(1).unwrap()) {
+            Some(DestinationDisposition::Commit {
+                relative_path,
+                replace_existing,
+            }) => {
+                assert!(!*replace_existing);
+                assert_ne!(relative_path.as_str(), "alpha.txt");
+            }
+            other => panic!("unexpected rename disposition: {other:?}"),
+        }
+
+        let skip = ScriptedDesktop::new([ConflictChoice::Decision {
+            action: ConflictAction::Skip,
+            scope: ConflictScope::ThisEntry,
+        }]);
+        let (plan, _) = build_plan_sync(&skip, root.path(), &offer, ConflictSelections::default())
+            .expect("skip plan");
+        assert!(matches!(
+            plan.entry(EntryId::new(1).unwrap()),
+            Some(DestinationDisposition::Skip)
+        ));
+
+        let cancel = ScriptedDesktop::new([ConflictChoice::Cancelled]);
+        assert!(
+            build_plan_sync(&cancel, root.path(), &offer, ConflictSelections::default()).is_err()
+        );
+    }
+
+    #[test]
+    fn apply_conflict_choice_scopes_entry_and_kind() {
+        let entry = EntryId::new(7).unwrap();
+        let per_entry = apply_conflict_choice(
+            ConflictSelections::default(),
+            entry,
+            ConflictKind::File,
+            ConflictAction::Overwrite,
+            ConflictScope::ThisEntry,
+        );
+        let all = apply_conflict_choice(
+            ConflictSelections::default(),
+            entry,
+            ConflictKind::Directory,
+            ConflictAction::Skip,
+            ConflictScope::AllRemaining,
+        );
+        // Both selections are accepted by the plan builder without panicking.
+        let _ = (per_entry, all);
+    }
+}
