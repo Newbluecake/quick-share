@@ -45,8 +45,6 @@ iwr -useb https://raw.githubusercontent.com/Newbluecake/quick-share/master/insta
 
 ```bash
 quick-share receive
-# 安装时未发生名称冲突的情况下，可使用快捷命令：
-rc
 ```
 
 在发送端计算机上：
@@ -109,12 +107,12 @@ Linux 端从命令行请求 Windows 选择要发送的内容，并安全接收�
 
 ```bash
 quick-share receive --request
-rc --request
+rc
 quick-share receive --request --peer 192.168.1.20:4242
 quick-share receive --request --peer 192.168.1.20:4242 --output ~/Downloads/received
 ```
 
-未提供 `--output` 时，主动远程选择会保存到运行命令时的当前目录；`--output` 可覆盖该目录。普通被动接收和 Windows Agent 接收对端 `send` 时仍使用配置的 Downloads 目录。
+未提供 `--output` 时，主动远程选择会保存到运行命令时的当前目录；`--output` 可覆盖该目录。`rc` 是 `quick-share receive --request` 的快捷形式。普通被动接收请使用完整命令 `quick-share receive`，它和 Windows Agent 接收对端 `send` 时仍使用配置的 Downloads 目录。
 
 - 自动发现只会列出协商支持远程选择的 Windows 代理；非交互模式下必须用 `--peer` 指定目标。
 - Windows 上默认使用该设备上次保存的目录，并提供“更改目录”；仅在完整信任身份时才记忆目录。

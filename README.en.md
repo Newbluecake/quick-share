@@ -45,8 +45,6 @@ On the receiving computer:
 
 ```bash
 quick-share receive
-# shortcut, when installed without a name conflict:
-rc
 ```
 
 On the sending computer:
@@ -109,12 +107,12 @@ From Linux, request that Windows choose the content to send and receive the call
 
 ```bash
 quick-share receive --request
-rc --request
+rc
 quick-share receive --request --peer 192.168.1.20:4242
 quick-share receive --request --peer 192.168.1.20:4242 --output ~/Downloads/received
 ```
 
-Without `--output`, an active remote-selection request saves into the command's current working directory; `--output` overrides it. Ordinary passive receive and the Windows agent receiving a peer's `send` continue to use the configured Downloads directory.
+Without `--output`, an active remote-selection request saves into the command's current working directory; `--output` overrides it. `rc` is the shortcut for `quick-share receive --request`. Use the full `quick-share receive` command for ordinary passive receive; it and the Windows agent receiving a peer's `send` continue to use the configured Downloads directory.
 
 - Auto-discovery lists only agents that negotiated remote selection; non-interactive use must name the target with `--peer`.
 - Windows defaults to that device's last saved directory and offers "Change directory"; the directory is remembered only for a fully trusted identity.

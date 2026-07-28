@@ -58,9 +58,25 @@ fn argv_zero_shortcuts_inject_send_and_receive_commands() {
     let send =
         parse_intent_from(["sc", "--peer", "192.0.2.10:4242", "file.txt"]).expect("sc shortcut");
     let receive = parse_intent_from(["rc.exe", "--output", "received"]).expect("rc shortcut");
+    let explicit_request = parse_intent_from(["rc", "--request"]).expect("compatible rc");
 
     assert!(matches!(send.command, IntentCommand::Send(_)));
-    assert!(matches!(receive.command, IntentCommand::Receive(_)));
+    let IntentCommand::Receive(receive) = receive.command else {
+        panic!("rc must map to receive");
+    };
+    assert!(receive.request_remote);
+    assert!(receive.once);
+    assert_eq!(
+        receive.output.as_deref(),
+        Some(std::path::Path::new("received"))
+    );
+    assert!(matches!(
+        explicit_request.command,
+        IntentCommand::Receive(quick_share_cli::ReceiveIntent {
+            request_remote: true,
+            ..
+        })
+    ));
 }
 
 #[test]

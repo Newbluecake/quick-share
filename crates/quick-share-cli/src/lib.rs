@@ -41,7 +41,16 @@ fn normalize_shortcut(mut arguments: Vec<OsString>) -> Vec<OsString> {
         .and_then(|stem| stem.to_str());
     match stem.map(str::to_ascii_lowercase).as_deref() {
         Some("sc") => arguments.insert(1, OsString::from("send")),
-        Some("rc") => arguments.insert(1, OsString::from("receive")),
+        Some("rc") => {
+            arguments.insert(1, OsString::from("receive"));
+            if !arguments
+                .iter()
+                .skip(2)
+                .any(|argument| argument == "--request")
+            {
+                arguments.insert(2, OsString::from("--request"));
+            }
+        }
         _ => {}
     }
     arguments
