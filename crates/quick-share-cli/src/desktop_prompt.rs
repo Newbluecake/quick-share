@@ -523,6 +523,10 @@ fn offer_digest(offer: &TransferOffer) -> Result<[u8; 32], DirectError> {
         .map_err(|_| DirectError::InvalidResponse)
 }
 
+pub(crate) fn callback_notification(succeeded: bool) -> Option<&'static str> {
+    (!succeeded).then_some("Selected content could not be sent.")
+}
+
 fn map_desktop_direct(error: DesktopError) -> DirectError {
     match error {
         DesktopError::Busy => {
@@ -731,6 +735,15 @@ mod tests {
         let cancel = ScriptedDesktop::new([ConflictChoice::Cancelled]);
         assert!(
             build_plan_sync(&cancel, root.path(), &offer, ConflictSelections::default()).is_err()
+        );
+    }
+
+    #[test]
+    fn successful_callback_is_silent_and_failure_requires_attention() {
+        assert_eq!(super::callback_notification(true), None);
+        assert_eq!(
+            super::callback_notification(false),
+            Some("Selected content could not be sent.")
         );
     }
 

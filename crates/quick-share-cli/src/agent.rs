@@ -6,7 +6,7 @@ use crate::{
         PreparedPathContent, finalize_path_transfer, load_identity, prepare_path_content,
         resolve_bind_ip, sender_policy, trust_store,
     },
-    desktop_prompt::{AgentReceiver, DesktopOfferPrompt},
+    desktop_prompt::{AgentReceiver, DesktopOfferPrompt, callback_notification},
 };
 use async_trait::async_trait;
 use quick_share_core::{
@@ -397,11 +397,9 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
                                 cancellation,
                             )
                             .await;
-                            let notification = match &result {
-                                Ok(()) => "Selected content was sent successfully.",
-                                Err(_) => "Selected content could not be sent.",
-                            };
-                            notify_desktop(desktop, notification).await;
+                            if let Some(notification) = callback_notification(result.is_ok()) {
+                                notify_desktop(desktop, notification).await;
+                            }
                             result
                         });
                     }
