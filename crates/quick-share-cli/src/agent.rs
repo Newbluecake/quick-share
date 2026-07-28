@@ -282,7 +282,7 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
         static_key_fingerprint: *blake3::hash(&identity.public_key()).as_bytes(),
         port: address.port(),
     };
-    let _registration = match MdnsRegistration::start_for_ips(
+    let registration = match MdnsRegistration::start_for_ips(
         &advertisement,
         config.discovery.include_virtual,
         &[bind_ip],
@@ -291,6 +291,24 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
         Err(_) if bind_ip.is_loopback() => None,
         Err(error) => return Err(AppError::Network(error.to_string())),
     };
+    let mdns_enabled = registration.is_some();
+    eprintln!("Quick Share agent is ready.");
+    eprintln!(
+        "  Device: {} ({})",
+        crate::terminal::terminal_safe(&advertisement.name),
+        advertisement.device_id
+    );
+    eprintln!("  Listen: {address}");
+    eprintln!(
+        "  Discovery: {}",
+        if mdns_enabled {
+            "mDNS enabled"
+        } else {
+            "mDNS unavailable (configured peers and --peer still work)"
+        }
+    );
+    eprintln!("  Tray: use Exit to stop the agent");
+
     let server = Arc::new(ServerContext {
         identity: Arc::clone(&identity),
         trust_store: trust,
@@ -326,21 +344,29 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
 
     let result = loop {
         tokio::select! {
-            _ = cancellation.cancelled() => break Ok(()),
+            _ = cancellation.cancelled() => {
+                eprintln!("Quick Share agent is stopping: desktop event loop closed.");
+                break Ok(())
+            },
             signal = tokio::signal::ctrl_c() => {
                 if signal.is_ok() {
+                    eprintln!("Quick Share agent is stopping: Ctrl+C.");
                     break Ok(());
                 }
             }
             event = tray_receiver.recv() => match event {
                 Some(TrayAction::Open) => {
+                    eprintln!("Quick Share agent status requested from the tray.");
                     notify_desktop(
                         Arc::clone(&desktop),
                         "Quick Share agent is running and ready for requests.",
                     )
                     .await;
                 }
-                Some(TrayAction::Exit) | None => break Ok(()),
+                Some(TrayAction::Exit) | None => {
+                    eprintln!("Quick Share agent is stopping: tray Exit.");
+                    break Ok(())
+                },
             },
             accepted = listener.accept() => {
                 let (stream, peer_address) = match accepted {
@@ -349,7 +375,10 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
                 };
                 let permit = match Arc::clone(&session_limit).try_acquire_owned() {
                     Ok(permit) => permit,
-                    Err(_) => continue,
+                    Err(_) => {
+                        eprintln!("Quick Share agent is busy: connection limit reached.");
+                        continue
+                    },
                 };
                 let server = Arc::clone(&server);
                 let sender = session_sender.clone();
@@ -370,6 +399,7 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
                     Ok(ServerSessionOutcome::TransferCompleted { transfer_id, .. }) => {
                         receiver.cleanup(transfer_id)
                             .map_err(|error| AppError::Filesystem(error.to_string()))?;
+                        eprintln!("Incoming transfer completed: {}", transfer_id.as_uuid());
                         notify_desktop(Arc::clone(&desktop), "Transfer completed.").await;
                     }
                     Ok(ServerSessionOutcome::SelectionReady {
@@ -378,7 +408,12 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
                         callback,
                         ..
                     }) => {
+                        eprintln!(
+                            "Remote source request accepted: transfer {}",
+                            transfer_id.as_uuid()
+                        );
                         let Some((content, permit)) = selection_handler.take(transfer_id) else {
+                            eprintln!("Remote source request failed: prepared selection was unavailable.");
                             continue;
                         };
                         let identity = Arc::clone(&identity);
@@ -400,23 +435,47 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
                             if let Some(notification) = callback_notification(result.is_ok()) {
                                 notify_desktop(desktop, notification).await;
                             }
-                            result
+                            (transfer_id, result)
                         });
                     }
                     Ok(ServerSessionOutcome::TransferCancelled { transfer_id, .. }) => {
                         let _ = receiver.cleanup(transfer_id);
+                        eprintln!("Transfer cancelled: {}", transfer_id.as_uuid());
                     }
-                    Ok(
-                        ServerSessionOutcome::SelectionFinished { .. }
-                        | ServerSessionOutcome::OfferRejected
-                        | ServerSessionOutcome::Disconnected,
-                    ) => {}
-                    Err(_) => {}
+                    Ok(ServerSessionOutcome::SelectionFinished { status, .. }) => {
+                        eprintln!("Remote source request finished: {status:?}");
+                    }
+                    Ok(ServerSessionOutcome::OfferRejected) => {
+                        eprintln!("Incoming transfer offer was rejected.");
+                    }
+                    Ok(ServerSessionOutcome::Disconnected) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "Agent session failed: {}",
+                            crate::terminal::terminal_safe(&error.to_string())
+                        );
+                    }
                 }
             }
             joined = callbacks.join_next(), if !callbacks.is_empty() => {
-                if let Some(Err(_)) = joined {
-                    continue;
+                match joined {
+                    Some(Ok((transfer_id, Ok(())))) => {
+                        eprintln!(
+                            "Selected content sent successfully: {}",
+                            transfer_id.as_uuid()
+                        );
+                    }
+                    Some(Ok((transfer_id, Err(error)))) => {
+                        eprintln!(
+                            "Selected content send failed ({}): {}",
+                            transfer_id.as_uuid(),
+                            crate::terminal::terminal_safe(&error.to_string())
+                        );
+                    }
+                    Some(Err(error)) => {
+                        eprintln!("Callback task failed: {error}");
+                    }
+                    None => {}
                 }
             }
         }
@@ -427,6 +486,7 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
     receiver
         .pause_all()
         .map_err(|error| AppError::Filesystem(error.to_string()))?;
+    eprintln!("Quick Share agent stopped.");
     result
 }
 
