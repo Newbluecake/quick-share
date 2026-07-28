@@ -1,7 +1,7 @@
 //! Production CLI wiring for Batch 6 direct send/receive and trusted-device operations.
 
 use crate::{
-    AppError, CommandIntent, ConfigIntent, ConfigKey, DevicesIntent, IntentCommand,
+    AgentIntent, AppError, CommandIntent, ConfigIntent, ConfigKey, DevicesIntent, IntentCommand,
     InteractionPolicy, ReceiveIntent, SendIntent, ServeIntent, UpdateIntent, UploadPassword,
     devices::run_devices,
     orchestration::{
@@ -92,12 +92,67 @@ pub async fn run(intent: CommandIntent) -> Result<(), AppError> {
         }
         IntentCommand::Send(send) => run_send(&dirs, &config, terminal, send).await,
         IntentCommand::Receive(receive) => run_receive(&dirs, &config, terminal, receive).await,
+        IntentCommand::Agent(agent) => run_agent(agent).await,
         IntentCommand::Config(command) => {
             run_config(&dirs, intent.global.config_path.as_deref(), config, command)
         }
         IntentCommand::Serve(serve) => run_serve(&config, serve).await,
         IntentCommand::Update(update) => run_update(terminal, update).await,
     }
+}
+
+async fn run_agent(_intent: AgentIntent) -> Result<(), AppError> {
+    Err(AppError::Usage(if cfg!(windows) {
+        "the Windows desktop agent must be launched through the main-thread agent entry point"
+            .to_owned()
+    } else {
+        "the desktop agent is currently supported only by the Windows implementation".to_owned()
+    }))
+}
+
+#[cfg(windows)]
+pub fn run_windows_agent(intent: CommandIntent) -> Result<(), AppError> {
+    let dirs = AppDirs::discover().map_err(|error| AppError::Filesystem(error.to_string()))?;
+    let config = load_config(&dirs, intent.global.config_path.as_deref())?;
+    let IntentCommand::Agent(agent_intent) = intent.command else {
+        return Err(AppError::Usage(
+            "the Windows agent entry point requires the agent command".to_owned(),
+        ));
+    };
+    let (desktop, control, tray_events, desktop_runtime) =
+        quick_share_platform::desktop::windows::windows_desktop(Duration::from_secs(11 * 60))?;
+    let desktop: Arc<dyn quick_share_platform::desktop::DesktopInteraction> = Arc::new(desktop);
+    let cancellation = CancellationToken::new();
+    let worker_cancellation = cancellation.clone();
+    let worker_control = control.clone();
+    let (result_sender, result_receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| AppError::Config(error.to_string()))
+            .and_then(|runtime| {
+                runtime.block_on(crate::agent::run_background(
+                    crate::agent::AgentBackground {
+                        dirs,
+                        config,
+                        intent: agent_intent,
+                        desktop,
+                        tray_events,
+                        cancellation: worker_cancellation,
+                    },
+                ))
+            });
+        let _ = result_sender.try_send(result);
+        let _ = worker_control.exit();
+    });
+    let desktop_result = desktop_runtime.run().map_err(AppError::from);
+    cancellation.cancel();
+    let worker_result = result_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|_| AppError::Network("desktop agent shutdown timed out".to_owned()))?;
+    desktop_result?;
+    worker_result
 }
 
 async fn run_update(terminal: ConsoleTerminal, intent: UpdateIntent) -> Result<(), AppError> {
@@ -734,13 +789,16 @@ fn print_retryable_resume_hint(
     }
 }
 
-fn prepare_path_transfer(
+pub(crate) struct PreparedPathContent {
+    entries: Vec<ManifestEntry>,
+    files: Vec<SendFile>,
+    total_bytes: u64,
+}
+
+pub(crate) fn prepare_path_content(
     paths: &[PathBuf],
     follow_links: bool,
-    sender: DeviceInfo,
-    chunk_size: u32,
-    resume_transfer_id: Option<TransferId>,
-) -> Result<(TransferOffer, TransferPlan), AppError> {
+) -> Result<PreparedPathContent, AppError> {
     let manifest = ManifestBuilder::new()
         .follow_links(follow_links)
         .build(paths)
@@ -769,15 +827,34 @@ fn prepare_path_transfer(
             digest: prepared.get(&entry.id).map(|file| file.final_digest),
         })
         .collect::<Vec<_>>();
-    let transfer_id = resume_transfer_id.unwrap_or_else(|| TransferId::new(Uuid::now_v7()));
+    Ok(PreparedPathContent {
+        entries,
+        files: prepared.into_values().collect(),
+        total_bytes: manifest.total_bytes,
+    })
+}
+
+pub(crate) fn finalize_path_transfer(
+    prepared: PreparedPathContent,
+    sender: DeviceInfo,
+    chunk_size: u32,
+    transfer_id: TransferId,
+    initiated_by: Option<quick_share_protocol::RequestId>,
+) -> Result<(TransferOffer, TransferPlan), AppError> {
+    let protocol_version = if initiated_by.is_some() {
+        ProtocolVersion::V1_1
+    } else {
+        ProtocolVersion::V1_0
+    };
     let offer = TransferOffer {
-        protocol_version: ProtocolVersion::V1_0,
+        protocol_version,
         transfer_id,
+        initiated_by,
         sender,
         content_kind: ContentKind::Files,
         chunk_size,
-        total_bytes: manifest.total_bytes,
-        entries,
+        total_bytes: prepared.total_bytes,
+        entries: prepared.entries,
     };
     offer
         .validate()
@@ -787,10 +864,27 @@ fn prepare_path_transfer(
         transfer_id,
         manifest_digest,
         chunk_size,
-        total_bytes: manifest.total_bytes,
-        files: prepared.into_values().collect(),
+        total_bytes: prepared.total_bytes,
+        files: prepared.files,
     };
     Ok((offer, plan))
+}
+
+fn prepare_path_transfer(
+    paths: &[PathBuf],
+    follow_links: bool,
+    sender: DeviceInfo,
+    chunk_size: u32,
+    resume_transfer_id: Option<TransferId>,
+) -> Result<(TransferOffer, TransferPlan), AppError> {
+    let prepared = prepare_path_content(paths, follow_links)?;
+    finalize_path_transfer(
+        prepared,
+        sender,
+        chunk_size,
+        resume_transfer_id.unwrap_or_else(|| TransferId::new(Uuid::now_v7())),
+        None,
+    )
 }
 
 fn prepare_text_transfer(
@@ -809,6 +903,7 @@ fn prepare_text_transfer(
     let offer = TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id,
+        initiated_by: None,
         sender,
         content_kind: ContentKind::Text,
         chunk_size,
@@ -852,6 +947,10 @@ async fn run_receive(
     terminal: ConsoleTerminal,
     intent: ReceiveIntent,
 ) -> Result<(), AppError> {
+    intent.validate_interaction(terminal.is_interactive())?;
+    if intent.request_remote {
+        return crate::remote_receive::run_remote_receive(dirs, config, terminal, intent).await;
+    }
     let text_output = intent
         .output
         .as_ref()
@@ -977,6 +1076,8 @@ async fn run_receive(
         offers,
         receiver: Arc::clone(&receiver),
         prompt,
+        selection: None,
+        expected_offers: None,
         operation_timeout: Duration::from_secs(30),
     });
     let shutdown = Arc::new(crate::orchestration::ShutdownController::default());
@@ -1060,11 +1161,17 @@ async fn run_receive(
                             break Ok(());
                         }
                     }
-                    Ok(ServerSessionOutcome::OfferRejected | ServerSessionOutcome::TransferCancelled) => {
+                    Ok(ServerSessionOutcome::OfferRejected | ServerSessionOutcome::TransferCancelled { .. }) => {
                         if options.once {
                             break Ok(());
                         }
                     }
+                    Ok(
+                        ServerSessionOutcome::SelectionReady { .. }
+                        | ServerSessionOutcome::SelectionFinished { .. },
+                    ) => terminal.warning(
+                        "ignored an unexpected desktop selection outcome in terminal receive mode",
+                    ),
                     Ok(ServerSessionOutcome::Disconnected) => {}
                     Err(error) if options.once => break Err(map_direct(error)),
                     Err(error) => terminal.warning(&map_direct(error).to_string()),
@@ -1098,7 +1205,21 @@ struct CliPrompt {
 
 #[async_trait]
 impl OfferPrompt for CliPrompt {
-    async fn decide(&self, view: &OfferView) -> Result<(OfferDecision, bool), DirectError> {
+    async fn prepare_expected(
+        &self,
+        _peer: &quick_share_transfer::auth::PeerAuthContext,
+        _view: &OfferView,
+        _offer: &quick_share_protocol::TransferOffer,
+    ) -> Result<(), DirectError> {
+        Ok(())
+    }
+
+    async fn decide(
+        &self,
+        _peer: &quick_share_transfer::auth::PeerAuthContext,
+        view: &OfferView,
+        _offer: &quick_share_protocol::TransferOffer,
+    ) -> Result<(OfferDecision, bool), DirectError> {
         let _prompt_guard = self.prompt_lock.lock().await;
         if self.text_only && view.content_kind != ContentKind::Text {
             return Ok((
@@ -1185,7 +1306,7 @@ impl Clipboard for UnavailableClipboard {
     }
 }
 
-fn resolve_bind_ip(value: &str, config: &AppConfig) -> Result<IpAddr, AppError> {
+pub(crate) fn resolve_bind_ip(value: &str, config: &AppConfig) -> Result<IpAddr, AppError> {
     if value != "lan" {
         return value.parse().map_err(|_| {
             AppError::Usage("network bind must be 'lan' or an IP address".to_owned())
@@ -1207,7 +1328,7 @@ fn looks_like_file(path: &Path) -> bool {
     path.is_file() || (!path.exists() && path.extension().is_some())
 }
 
-fn sender_policy(config: &AppConfig) -> Result<SenderPolicy, AppError> {
+pub(crate) fn sender_policy(config: &AppConfig) -> Result<SenderPolicy, AppError> {
     Ok(SenderPolicy {
         concurrent_files: config.transfer.concurrent_files,
         queue_capacity: config.transfer.concurrent_files.saturating_mul(4).max(1),
@@ -1234,13 +1355,13 @@ fn offer_digest(offer: &TransferOffer) -> Result<[u8; 32], AppError> {
         .map_err(|error| AppError::Usage(error.to_string()))
 }
 
-fn load_identity(dirs: &AppDirs) -> Result<DeviceIdentity, AppError> {
+pub(crate) fn load_identity(dirs: &AppDirs) -> Result<DeviceIdentity, AppError> {
     IdentityStore::new(dirs.data_dir().join("identity.json"))
         .load_or_create()
         .map_err(|error| AppError::Identity(error.to_string()))
 }
 
-fn trust_store(dirs: &AppDirs) -> TrustedDeviceStore {
+pub(crate) fn trust_store(dirs: &AppDirs) -> TrustedDeviceStore {
     TrustedDeviceStore::new(dirs.data_dir().join("trusted-devices.toml"))
 }
 
@@ -1385,6 +1506,8 @@ fn map_direct(error: DirectError) -> AppError {
         },
         DirectError::Noise(_) | DirectError::Network(_) => AppError::Network(error.to_string()),
         DirectError::Offer(_)
+        | DirectError::Selection(_)
+        | DirectError::ExpectedOffer(_)
         | DirectError::InvalidResponse
         | DirectError::Unauthorized
         | DirectError::OfferChannel

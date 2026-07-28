@@ -33,6 +33,7 @@ clap = { version = "4.6", features = ["derive", "env"] }
 directories = "6.0"
 ed25519-dalek = "2.2"
 encoding_rs = "0.8"
+embed-resource = "3.0.11"
 flume = "0.12"
 futures-util = "0.3"
 getrandom = "0.4"
@@ -45,6 +46,7 @@ percent-encoding = "2.3"
 proptest = "1.9"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "stream"] }
 qrcode = { version = "0.14", default-features = false }
+rfd = { version = "0.17.2", default-features = false, features = ["common-controls-v6"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring", "zeroize"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -59,9 +61,11 @@ thiserror = "2.0"
 tokio = { version = "1.48", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 tower = { version = "0.5", features = ["limit", "util"] }
+tray-icon-win = { version = "0.1.5", default-features = false, features = ["common-controls-v6"] }
 toml = "0.9"
 unicode-normalization = "0.1"
 uuid = { version = "1.18", features = ["serde", "v7"] }
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
 x25519-dalek = { version = "2.0", features = ["getrandom", "static_secrets"] }
 zeroize = "1.8"
 zip = { version = "8.6", default-features = false }

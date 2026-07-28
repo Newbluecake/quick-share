@@ -56,6 +56,17 @@ fn no_arguments_prints_help_and_returns_usage_error() {
     assert!(stderr.contains("Usage:"));
 }
 
+#[cfg(not(windows))]
+#[test]
+fn agent_reports_the_first_phase_windows_boundary() {
+    let output = run(&["agent"]);
+    let stderr = String::from_utf8(output.stderr).expect("error should be UTF-8");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr.contains("Windows"));
+    assert!(stderr.contains("agent"));
+}
+
 #[test]
 fn workspace_contains_the_planned_crate_boundaries() {
     // Arrange

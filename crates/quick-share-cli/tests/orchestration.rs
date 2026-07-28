@@ -434,6 +434,8 @@ fn offer_view() -> OfferView {
 #[test]
 fn receive_defaults_output_and_non_tty_unknown_offer_is_never_silently_accepted() {
     let intent = ReceiveIntent {
+        request_remote: false,
+        peer: None,
         output: None,
         port: None,
         bind: None,

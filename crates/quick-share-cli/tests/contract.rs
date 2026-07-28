@@ -1,4 +1,10 @@
-use quick_share_cli::{AppError, ExitStatus, IntentCommand, InteractionPolicy, parse_intent_from};
+use quick_share_cli::{
+    AppError, ExitStatus, IntentCommand, InteractionPolicy, parse_intent_from,
+    require_desktop_choice,
+};
+use quick_share_platform::desktop::{
+    AuthorizationChoice, ConflictChoice, DesktopError, DirectoryChoice, SourceChoice,
+};
 
 #[test]
 fn complete_command_tree_parses_into_execution_independent_intents() {
@@ -25,6 +31,14 @@ fn complete_command_tree_parses_into_execution_independent_intents() {
         vec!["quick-share", "config", "path"],
         vec!["quick-share", "config", "set", "device.name", "laptop"],
         vec!["quick-share", "update", "--check"],
+        vec!["quick-share", "agent", "--port", "4242"],
+        vec![
+            "quick-share",
+            "receive",
+            "--request",
+            "--peer",
+            "qs_0123456789abcdef0123456789abcdef",
+        ],
     ];
 
     for arguments in cases {
@@ -93,6 +107,58 @@ fn send_mode_and_content_conflicts_are_rejected_by_the_parser() {
 }
 
 #[test]
+fn remote_receive_and_agent_contracts_are_explicit_and_safe() {
+    let agent = parse_intent_from([
+        "quick-share",
+        "agent",
+        "--port",
+        "4242",
+        "--bind",
+        "192.168.1.2",
+    ])
+    .expect("agent intent");
+    assert!(matches!(agent.command, IntentCommand::Agent(_)));
+
+    let request = parse_intent_from([
+        "quick-share",
+        "receive",
+        "--request",
+        "--peer",
+        "host:4242",
+        "--output",
+        "received",
+    ])
+    .expect("remote receive intent");
+    let IntentCommand::Receive(request) = request.command else {
+        panic!("receive intent");
+    };
+    assert!(request.request_remote);
+    assert_eq!(request.peer.as_deref(), Some("host:4242"));
+    assert!(request.once, "remote receive is always one-shot");
+    request
+        .validate_interaction(false)
+        .expect("explicit peer is safe without a TTY");
+
+    let interactive = parse_intent_from(["quick-share", "receive", "--request"])
+        .expect("interactive discovery request");
+    let IntentCommand::Receive(interactive) = interactive.command else {
+        panic!("receive intent");
+    };
+    interactive
+        .validate_interaction(true)
+        .expect("interactive caller may select a peer");
+    assert!(matches!(
+        interactive.validate_interaction(false),
+        Err(AppError::Usage(_))
+    ));
+
+    assert!(
+        parse_intent_from(["quick-share", "receive", "--peer", "host:4242"]).is_err(),
+        "--peer must not silently change passive receive semantics"
+    );
+}
+
+#[test]
 fn config_set_rejects_secret_or_unknown_keys() {
     let error = parse_intent_from([
         "quick-share",
@@ -158,6 +224,39 @@ fn non_interactive_confirmation_requires_an_explicit_yes() {
     InteractionPolicy::new(true, false)
         .require_confirmation("remove trusted device")
         .expect("interactive caller may prompt");
+}
+
+#[test]
+fn desktop_cancellation_maps_to_successful_app_cancellation() {
+    assert!(matches!(
+        require_desktop_choice(
+            SourceChoice::Cancelled
+                .selected_paths()
+                .expect("valid cancellation")
+        ),
+        Err(AppError::Cancelled)
+    ));
+    assert!(matches!(
+        require_desktop_choice(AuthorizationChoice::Cancelled.into_decision()),
+        Err(AppError::Cancelled)
+    ));
+    assert!(matches!(
+        require_desktop_choice(DirectoryChoice::Cancelled.into_directory()),
+        Err(AppError::Cancelled)
+    ));
+    assert!(matches!(
+        require_desktop_choice(ConflictChoice::Cancelled.into_decision()),
+        Err(AppError::Cancelled)
+    ));
+    assert_eq!(AppError::Cancelled.status(), ExitStatus::Success);
+    assert_eq!(
+        AppError::from(DesktopError::Unsupported).status(),
+        ExitStatus::Usage
+    );
+    assert_eq!(
+        AppError::from(DesktopError::InvalidSelection).status(),
+        ExitStatus::Filesystem
+    );
 }
 
 #[test]

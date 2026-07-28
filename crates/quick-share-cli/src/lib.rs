@@ -1,9 +1,14 @@
 #![forbid(unsafe_code)]
 //! Stable command-line contract and application exit-status mapping.
 
+#[cfg(windows)]
+mod agent;
 pub mod app;
+#[cfg(windows)]
+mod desktop_prompt;
 pub mod devices;
 pub mod orchestration;
+mod remote_receive;
 pub mod terminal;
 
 use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand, ValueEnum};
@@ -68,6 +73,8 @@ enum Commands {
     Send(SendArgs),
     /// Advertise this device and receive direct transfers.
     Receive(ReceiveArgs),
+    /// Run the Windows desktop agent for bidirectional interactive transfers.
+    Agent(AgentArgs),
     /// Share selected content through the browser-oriented HTTPS service.
     Serve(ServeArgs),
     /// List and manage pinned trusted devices.
@@ -119,6 +126,12 @@ struct SendArgs {
 
 #[derive(Debug, Args)]
 struct ReceiveArgs {
+    /// Ask a remote desktop agent to choose source files and call this receiver back.
+    #[arg(long)]
+    request: bool,
+    /// Target desktop agent. Without this option, an interactive request scans for agents.
+    #[arg(long, value_name = "DEVICE_OR_ADDRESS", requires = "request")]
+    peer: Option<String>,
     /// Existing directory (or extensionless new path) for files; a new path with an extension for one-shot text output.
     #[arg(long, value_name = "PATH")]
     output: Option<PathBuf>,
@@ -137,6 +150,16 @@ struct ReceiveArgs {
     /// Approve non-interactive confirmations where policy permits.
     #[arg(long)]
     yes: bool,
+}
+
+#[derive(Debug, Args)]
+struct AgentArgs {
+    /// Listener port; zero requests automatic selection.
+    #[arg(long)]
+    port: Option<u16>,
+    /// Listener interface policy or explicit address.
+    #[arg(long, value_name = "LAN_OR_ADDRESS")]
+    bind: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -274,6 +297,8 @@ pub enum IntentCommand {
     Send(SendIntent),
     /// Receiver request.
     Receive(ReceiveIntent),
+    /// Windows desktop agent request.
+    Agent(AgentIntent),
     /// Traditional Web request.
     Serve(ServeIntent),
     /// Trusted-device operation.
@@ -310,12 +335,33 @@ pub struct SendIntent {
 /// Receiver command data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiveIntent {
+    pub request_remote: bool,
+    pub peer: Option<String>,
     pub output: Option<PathBuf>,
     pub port: Option<u16>,
     pub bind: Option<String>,
     pub once: bool,
     pub confirm_trusted: Option<bool>,
     pub assume_yes: bool,
+}
+
+impl ReceiveIntent {
+    /// Non-interactive remote requests must identify exactly which agent to contact.
+    pub fn validate_interaction(&self, interactive: bool) -> Result<(), AppError> {
+        if self.request_remote && !interactive && self.peer.is_none() {
+            return Err(AppError::Usage(
+                "non-interactive remote receive requires --peer".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Windows desktop agent command data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentIntent {
+    pub port: Option<u16>,
+    pub bind: Option<String>,
 }
 
 /// Web command data.
@@ -445,14 +491,20 @@ impl From<Cli> for CommandIntent {
                 assume_yes: args.yes,
             }),
             Commands::Receive(args) => IntentCommand::Receive(ReceiveIntent {
+                request_remote: args.request,
+                peer: args.peer,
                 output: args.output,
                 port: args.port,
                 bind: args.bind,
-                once: args.once,
+                once: args.once || args.request,
                 confirm_trusted: args
                     .trusted_policy
                     .map(|value| value == TrustedPolicyArg::Confirm),
                 assume_yes: args.yes,
+            }),
+            Commands::Agent(args) => IntentCommand::Agent(AgentIntent {
+                port: args.port,
+                bind: args.bind,
             }),
             Commands::Serve(args) => IntentCommand::Serve(ServeIntent {
                 paths: args.paths,
@@ -528,6 +580,42 @@ pub enum AppError {
     Update(String),
     #[error("cancelled")]
     Cancelled,
+}
+
+/// Converts an explicit desktop cancellation into the CLI's successful cancellation outcome.
+pub fn require_desktop_choice<T>(choice: Option<T>) -> Result<T, AppError> {
+    choice.ok_or(AppError::Cancelled)
+}
+
+impl From<quick_share_platform::desktop::DesktopError> for AppError {
+    fn from(error: quick_share_platform::desktop::DesktopError) -> Self {
+        use quick_share_platform::desktop::DesktopError;
+        match error {
+            DesktopError::Unsupported => {
+                Self::Usage("desktop interaction is unsupported on this platform".to_owned())
+            }
+            DesktopError::Unavailable => {
+                Self::Usage("desktop interaction is unavailable in this session".to_owned())
+            }
+            DesktopError::Busy => {
+                Self::Usage("another desktop interaction is already active".to_owned())
+            }
+            DesktopError::TimedOut => {
+                Self::Usage("desktop interaction deadline expired".to_owned())
+            }
+            DesktopError::EventLoopExited => Self::Usage("desktop event loop exited".to_owned()),
+            DesktopError::InvalidSelection => {
+                Self::Filesystem("desktop selection is empty or invalid".to_owned())
+            }
+            DesktopError::InvalidDirectory => {
+                Self::Filesystem("receive directory is invalid".to_owned())
+            }
+            DesktopError::DirectoryNotWritable => {
+                Self::Filesystem("receive directory is not writable".to_owned())
+            }
+            DesktopError::Backend => Self::Filesystem("desktop backend failed".to_owned()),
+        }
+    }
 }
 
 impl AppError {
