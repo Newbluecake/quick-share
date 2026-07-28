@@ -38,6 +38,12 @@ pub(crate) trait NativeDialogs: Send + Sync {
     ) -> Result<Option<PathBuf>, DesktopError>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceKind {
+    Files,
+    Folder,
+}
+
 #[derive(Debug)]
 pub(crate) struct DialogMapper<D> {
     dialogs: D,
@@ -50,6 +56,31 @@ impl<D> DialogMapper<D> {
 }
 
 impl<D: NativeDialogs> DialogMapper<D> {
+    pub(crate) fn pick_send_source(
+        &self,
+        request: &SourceDialog,
+        kind: SourceKind,
+    ) -> Result<SourceChoice, DesktopError> {
+        let initial = if request.initial_directory.is_dir() {
+            request.initial_directory.clone()
+        } else {
+            env::current_dir().map_err(|_| DesktopError::Backend)?
+        };
+        match kind {
+            SourceKind::Files => match self.dialogs.pick_files("选择一个或多个文件", &initial)?
+            {
+                Some(paths) if paths.is_empty() => Err(DesktopError::InvalidSelection),
+                Some(paths) => Ok(SourceChoice::Files(paths)),
+                None => Ok(SourceChoice::Cancelled),
+            },
+            SourceKind::Folder => match self.dialogs.pick_folder("选择文件夹", &initial)? {
+                Some(path) if path.as_os_str().is_empty() => Err(DesktopError::InvalidSelection),
+                Some(path) => Ok(SourceChoice::Folder(path)),
+                None => Ok(SourceChoice::Cancelled),
+            },
+        }
+    }
+
     fn choose_scope(&self) -> Result<Option<ConflictScope>, DesktopError> {
         let result = self.dialogs.show_message(&MessageRequest {
             title: "应用冲突处理".to_owned(),
@@ -118,25 +149,9 @@ impl<D: NativeDialogs> DesktopInteraction for DialogMapper<D> {
             secondary: Some("选择文件夹".to_owned()),
             tertiary: Some("取消".to_owned()),
         })?;
-        let initial = if request.initial_directory.is_dir() {
-            request.initial_directory.clone()
-        } else {
-            env::current_dir().map_err(|_| DesktopError::Backend)?
-        };
         match result {
-            MessageResult::Primary => {
-                match self.dialogs.pick_files("选择一个或多个文件", &initial)? {
-                    Some(paths) if paths.is_empty() => Err(DesktopError::InvalidSelection),
-                    Some(paths) => Ok(SourceChoice::Files(paths)),
-                    None => Ok(SourceChoice::Cancelled),
-                }
-            }
-            MessageResult::Secondary => match self.dialogs.pick_folder("选择文件夹", &initial)?
-            {
-                Some(path) if path.as_os_str().is_empty() => Err(DesktopError::InvalidSelection),
-                Some(path) => Ok(SourceChoice::Folder(path)),
-                None => Ok(SourceChoice::Cancelled),
-            },
+            MessageResult::Primary => self.pick_send_source(request, SourceKind::Files),
+            MessageResult::Secondary => self.pick_send_source(request, SourceKind::Folder),
             MessageResult::Tertiary | MessageResult::Closed => Ok(SourceChoice::Cancelled),
         }
     }

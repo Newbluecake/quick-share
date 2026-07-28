@@ -10,11 +10,15 @@ mod broker;
 #[cfg(any(windows, test))]
 mod mapping;
 #[cfg(windows)]
+mod source_picker;
+#[cfg(windows)]
 pub mod windows;
 
+#[cfg(windows)]
+pub(crate) use broker::PendingSourceRequest;
 pub use broker::{DesktopBroker, DesktopBrokerReceiver, DesktopWake, desktop_broker};
 #[cfg(windows)]
-pub(crate) use mapping::{DialogMapper, MessageRequest, MessageResult, NativeDialogs};
+pub(crate) use mapping::{DialogMapper, MessageRequest, MessageResult, NativeDialogs, SourceKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorizationDialog {

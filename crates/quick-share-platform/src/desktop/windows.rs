@@ -2,7 +2,8 @@
 
 use super::{
     DesktopBroker, DesktopBrokerReceiver, DesktopError, DialogMapper, MessageRequest,
-    MessageResult, NativeDialogs, desktop_broker,
+    MessageResult, NativeDialogs, PendingSourceRequest, desktop_broker,
+    source_picker::{PickerAction, SourcePicker},
 };
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use std::{
@@ -17,7 +18,7 @@ use tray_icon_win::{
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     window::{Window, WindowId},
 };
 
@@ -122,6 +123,8 @@ struct WindowsApplication {
     tray_sender: mpsc::SyncSender<TrayAction>,
     owner: Option<Arc<Window>>,
     backend: Option<DialogMapper<WindowsDialogs>>,
+    source_picker: Option<SourcePicker>,
+    pending_source: Option<PendingSourceRequest>,
     tray: Option<TrayIcon>,
     open_id: Option<MenuId>,
     exit_id: Option<MenuId>,
@@ -141,6 +144,8 @@ impl WindowsApplication {
             tray_sender,
             owner: None,
             backend: None,
+            source_picker: None,
+            pending_source: None,
             tray: None,
             open_id: None,
             exit_id: None,
@@ -185,13 +190,50 @@ impl WindowsApplication {
         Ok(())
     }
 
-    fn drain(&self) {
-        if let Some(backend) = self.backend.as_ref() {
-            let _ = self.requests.drain(backend);
+    fn drain(&mut self, event_loop: &ActiveEventLoop) {
+        if self.pending_source.is_some() {
+            return;
+        }
+        let pending = self
+            .backend
+            .as_ref()
+            .and_then(|backend| self.requests.drain_for_source_picker(backend));
+        let Some(pending) = pending else {
+            return;
+        };
+        match SourcePicker::new(event_loop, pending.request().requester_name.clone()) {
+            Ok(picker) => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(pending.expires_at()));
+                self.pending_source = Some(pending);
+                self.source_picker = Some(picker);
+            }
+            Err(error) => pending.respond(Err(error)),
         }
     }
 
-    fn exit(&self, event_loop: &ActiveEventLoop) {
+    fn finish_source_picker(&mut self, action: PickerAction, event_loop: &ActiveEventLoop) {
+        self.source_picker = None;
+        let Some(pending) = self.pending_source.take() else {
+            return;
+        };
+        event_loop.set_control_flow(ControlFlow::Wait);
+        let response = match action {
+            PickerAction::Pick(kind) => self
+                .backend
+                .as_ref()
+                .ok_or(DesktopError::Unavailable)
+                .and_then(|backend| backend.pick_send_source(pending.request(), kind)),
+            PickerAction::Cancel => Ok(super::SourceChoice::Cancelled),
+            PickerAction::RenderFailed => Err(DesktopError::Backend),
+        };
+        pending.respond(response);
+    }
+
+    fn exit(&mut self, event_loop: &ActiveEventLoop) {
+        self.source_picker = None;
+        if let Some(pending) = self.pending_source.take() {
+            pending.respond(Err(DesktopError::EventLoopExited));
+        }
         let _ = self.tray_sender.try_send(TrayAction::Exit);
         self.requests.shutdown();
         event_loop.exit();
@@ -217,13 +259,13 @@ impl ApplicationHandler<UserEvent> for WindowsApplication {
                 event_loop.exit();
                 return;
             }
-            self.drain();
+            self.drain(event_loop);
         }
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::Drain => self.drain(),
+            UserEvent::Drain => self.drain(event_loop),
             UserEvent::Exit => self.exit(event_loop),
             UserEvent::Menu(id) if self.open_id.as_ref() == Some(&id) => {
                 let _ = self.tray_sender.try_send(TrayAction::Open);
@@ -235,12 +277,30 @@ impl ApplicationHandler<UserEvent> for WindowsApplication {
 
     fn window_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        _event: WindowEvent,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
     ) {
+        let action = self
+            .source_picker
+            .as_mut()
+            .filter(|picker| picker.window_id() == window_id)
+            .and_then(|picker| picker.handle_event(&event));
+        if let Some(action) = action {
+            self.finish_source_picker(action, event_loop);
+        }
         // The owner is deliberately hidden and is not an application-close surface.
         // Only tray Exit or the explicit control channel may stop the resident agent.
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self
+            .pending_source
+            .as_ref()
+            .is_some_and(|pending| std::time::Instant::now() >= pending.expires_at())
+        {
+            self.finish_source_picker(PickerAction::Cancel, event_loop);
+        }
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -250,6 +310,8 @@ impl ApplicationHandler<UserEvent> for WindowsApplication {
             self.menu_handler_installed = false;
         }
         self.tray = None;
+        self.source_picker = None;
+        self.pending_source = None;
         self.backend = None;
         self.owner = None;
     }

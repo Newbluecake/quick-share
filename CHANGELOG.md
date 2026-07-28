@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Replaced the generic Windows send-source confirmation dialog with a compact Quick Share chooser that supports file/folder icons, light and dark themes, high-DPI rendering, mouse and keyboard navigation, request timeout handling, and the existing native Windows file and folder pickers.
+
 ## [2.1.0] - 2026-07-28
 
 ### Added

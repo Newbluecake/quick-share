@@ -59,6 +59,23 @@ pub struct DesktopBrokerReceiver {
     state: Arc<AtomicU8>,
 }
 
+/// Source request held by the Windows event loop while the custom chooser is visible.
+#[cfg(any(windows, test))]
+pub(crate) struct PendingSourceRequest {
+    envelope: Envelope,
+}
+
+#[cfg(any(windows, test))]
+impl fmt::Debug for PendingSourceRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PendingSourceRequest")
+            .field("request", &"REDACTED")
+            .field("expires_at", &self.envelope.expires_at)
+            .finish()
+    }
+}
+
 impl fmt::Debug for DesktopBrokerReceiver {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -177,7 +194,55 @@ impl DesktopInteraction for DesktopBroker {
     }
 }
 
+#[cfg(any(windows, test))]
+impl PendingSourceRequest {
+    pub(crate) fn request(&self) -> &SourceDialog {
+        let Request::Source(request) = &self.envelope.request else {
+            unreachable!("pending source request contains a different request kind");
+        };
+        request
+    }
+
+    #[cfg(windows)]
+    pub(crate) const fn expires_at(&self) -> Instant {
+        self.envelope.expires_at
+    }
+
+    pub(crate) fn respond(self, response: Result<SourceChoice, DesktopError>) {
+        if Instant::now() >= self.envelope.expires_at {
+            self.envelope.respond(Err(DesktopError::TimedOut));
+        } else {
+            self.envelope.respond(response.map(Response::Source));
+        }
+    }
+}
+
 impl DesktopBrokerReceiver {
+    #[cfg(any(windows, test))]
+    /// Executes queued non-source requests and yields a source request for custom event-loop UI.
+    pub(crate) fn drain_for_source_picker(
+        &self,
+        backend: &dyn DesktopInteraction,
+    ) -> Option<PendingSourceRequest> {
+        if self.state.load(Ordering::Acquire) == EXITED {
+            self.shutdown();
+            return None;
+        }
+        loop {
+            match self.receiver.try_recv() {
+                Ok(envelope) if matches!(&envelope.request, Request::Source(_)) => {
+                    if Instant::now() >= envelope.expires_at {
+                        envelope.respond(Err(DesktopError::TimedOut));
+                        continue;
+                    }
+                    return Some(PendingSourceRequest { envelope });
+                }
+                Ok(envelope) => envelope.execute(backend),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
+            }
+        }
+    }
+
     /// Executes all currently queued requests on the caller's event-loop thread.
     pub fn drain(&self, backend: &dyn DesktopInteraction) -> usize {
         if self.state.load(Ordering::Acquire) == EXITED {
@@ -269,4 +334,107 @@ enum Response {
     Directory(DirectoryChoice),
     Conflict(ConflictChoice),
     Notified,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{path::PathBuf, thread};
+
+    #[derive(Debug, Clone, Copy)]
+    struct CancellingDesktop;
+
+    impl DesktopInteraction for CancellingDesktop {
+        fn authorize_peer(
+            &self,
+            _request: &AuthorizationDialog,
+        ) -> Result<AuthorizationChoice, DesktopError> {
+            Ok(AuthorizationChoice::Cancelled)
+        }
+
+        fn choose_send_source(
+            &self,
+            _request: &SourceDialog,
+        ) -> Result<SourceChoice, DesktopError> {
+            Ok(SourceChoice::Cancelled)
+        }
+
+        fn confirm_receive_directory(
+            &self,
+            _request: &ReceiveDirectoryDialog,
+        ) -> Result<DirectoryChoice, DesktopError> {
+            Ok(DirectoryChoice::Cancelled)
+        }
+
+        fn resolve_conflict(
+            &self,
+            _request: &ConflictDialog,
+        ) -> Result<ConflictChoice, DesktopError> {
+            Ok(ConflictChoice::Cancelled)
+        }
+
+        fn notify(&self, _notification: &DesktopNotification) -> Result<(), DesktopError> {
+            Ok(())
+        }
+    }
+
+    fn source_request() -> SourceDialog {
+        SourceDialog {
+            requester_name: "peer".to_owned(),
+            initial_directory: PathBuf::from("C:/Users/test/Downloads"),
+        }
+    }
+
+    #[test]
+    fn pending_source_can_be_completed_by_event_loop_ui() {
+        let (wake_sender, wake_receiver) = mpsc::sync_channel(1);
+        let wake = Arc::new(move || {
+            wake_sender
+                .try_send(())
+                .map_err(|_| DesktopError::EventLoopExited)
+        });
+        let (broker, receiver) = desktop_broker(1, Duration::from_secs(1), wake);
+        let request = source_request();
+        let worker = thread::spawn(move || broker.choose_send_source(&request));
+        wake_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("source request wakes event loop");
+
+        let pending = receiver
+            .drain_for_source_picker(&CancellingDesktop)
+            .expect("source request is yielded");
+        assert_eq!(pending.request().requester_name, "peer");
+        pending.respond(Ok(SourceChoice::Cancelled));
+
+        assert_eq!(
+            worker.join().expect("worker joins"),
+            Ok(SourceChoice::Cancelled)
+        );
+    }
+
+    #[test]
+    fn pending_source_rejects_a_selection_that_arrives_after_deadline() {
+        let (wake_sender, wake_receiver) = mpsc::sync_channel(1);
+        let wake = Arc::new(move || {
+            wake_sender
+                .try_send(())
+                .map_err(|_| DesktopError::EventLoopExited)
+        });
+        let (broker, receiver) = desktop_broker(1, Duration::from_millis(25), wake);
+        let request = source_request();
+        let worker = thread::spawn(move || broker.choose_send_source(&request));
+        wake_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("source request wakes event loop");
+        let pending = receiver
+            .drain_for_source_picker(&CancellingDesktop)
+            .expect("source request is yielded");
+        thread::sleep(Duration::from_millis(35));
+        pending.respond(Ok(SourceChoice::Folder(PathBuf::from("C:/late"))));
+
+        assert_eq!(
+            worker.join().expect("worker joins"),
+            Err(DesktopError::TimedOut)
+        );
+    }
 }
