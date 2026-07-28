@@ -112,21 +112,25 @@ impl SendTerminal for ConsoleTerminal {
         peers: &[UnverifiedPeer],
         interaction: InteractionPolicy,
     ) -> Result<usize, AppError> {
-        interaction.require_confirmation("select a receiving device")?;
         if peers.is_empty() {
             return Err(AppError::PeerUnavailable(
                 "no receiver is available".to_owned(),
             ));
         }
+        if peers.len() == 1 {
+            eprintln!(
+                "Using the only available peer: {} ({}) [{}]",
+                terminal_safe(&peers[0].name),
+                peers[0].device_id,
+                endpoint_summary(&peers[0])
+            );
+            return Ok(0);
+        }
+        interaction.require_confirmation("select a receiving device")?;
         if !self.interactive {
-            return if peers.len() == 1 {
-                Ok(0)
-            } else {
-                Err(AppError::Usage(
-                    "multiple receivers require an interactive selection or explicit --peer"
-                        .to_owned(),
-                ))
-            };
+            return Err(AppError::Usage(
+                "multiple receivers require an interactive selection or explicit --peer".to_owned(),
+            ));
         }
         for (index, peer) in peers.iter().enumerate() {
             eprintln!(
@@ -136,16 +140,6 @@ impl SendTerminal for ConsoleTerminal {
                 peer.device_id,
                 endpoint_summary(peer)
             );
-        }
-        if peers.len() == 1 {
-            eprint!("Send securely to this receiver? [y/N] ");
-            io::stderr().flush().map_err(map_io)?;
-            return read_line().and_then(|answer| {
-                match answer.trim().to_ascii_lowercase().as_str() {
-                    "y" | "yes" => Ok(0),
-                    _ => Err(AppError::Cancelled),
-                }
-            });
         }
         eprint!("Select receiver [1-{}], or 0 to cancel: ", peers.len());
         io::stderr().flush().map_err(map_io)?;
@@ -310,12 +304,36 @@ pub fn terminal_safe(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ConsoleTerminal, terminal_safe};
+    use crate::{InteractionPolicy, orchestration::SendTerminal};
+    use quick_share_discovery::UnverifiedPeer;
+    use quick_share_protocol::{Capability, DeviceId, ProtocolVersion};
+    use std::{collections::BTreeSet, net::SocketAddr};
 
     #[test]
     fn terminal_text_escapes_controls_instead_of_emitting_ansi() {
         let safe = terminal_safe("name\n\u{1b}[31m");
         assert_eq!(safe, "name\\u{a}\\u{1b}[31m");
         assert!(!safe.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn the_only_available_peer_is_selected_without_confirmation() {
+        let peer = UnverifiedPeer {
+            device_id: DeviceId::parse("qs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("device id"),
+            name: "configured-peer".to_owned(),
+            version: ProtocolVersion::V1_1,
+            capabilities: BTreeSet::from([Capability::Files]),
+            static_key_fingerprint: [1; 32],
+            endpoints: BTreeSet::from([SocketAddr::from(([192, 0, 2, 1], 4242))]),
+            unverified: true,
+        };
+        let selected = SendTerminal::select_peer(
+            &ConsoleTerminal::new(false),
+            &[peer],
+            InteractionPolicy::new(false, false),
+        )
+        .expect("single peer is routing, not trust confirmation");
+        assert_eq!(selected, 0);
     }
 
     #[test]
