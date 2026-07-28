@@ -10,6 +10,7 @@ use crate::{
 use cap_std::{ambient_authority, fs::Dir};
 use quick_share_core::{
     config::ConflictPolicy,
+    destination::{DestinationDisposition, DestinationPlan, DestinationPlanError},
     manifest::SymlinkDisposition,
     paths::{PathError, RelativePath, resolve_destination},
 };
@@ -49,6 +50,19 @@ pub struct ReceiverProgressEvent {
     pub status: TransferStatus,
 }
 
+impl ReceiverPolicy {
+    pub(crate) fn validate(&self) -> Result<(), ReceiverError> {
+        if self.max_receive_tasks == 0
+            || self.max_receive_tasks > MAX_RECEIVER_TASKS
+            || self.max_file_streams == 0
+            || self.max_file_streams > MAX_RECEIVER_FILE_STREAMS
+        {
+            return Err(ReceiverError::InvalidLimits);
+        }
+        Ok(())
+    }
+}
+
 impl Default for ReceiverPolicy {
     fn default() -> Self {
         Self {
@@ -57,6 +71,40 @@ impl Default for ReceiverPolicy {
             max_file_streams: 4,
         }
     }
+}
+
+/// Direct-server receiver boundary implemented by fixed-root and routed receivers.
+pub trait ReceiverEndpoint: Send + Sync {
+    fn status(
+        &self,
+        peer: &DeviceId,
+        request: TransferStatusRequest,
+        now: Instant,
+    ) -> Result<TransferStatusResponse, ReceiverError>;
+
+    fn receive_chunk(
+        &self,
+        peer: &DeviceId,
+        request_id: RequestId,
+        frame: ChunkData,
+        now: Instant,
+    ) -> Result<Option<ChunkAck>, ReceiverError>;
+
+    fn complete(
+        &self,
+        peer: &DeviceId,
+        request: TransferComplete,
+        now: Instant,
+    ) -> Result<TransferCompleteAck, ReceiverError>;
+
+    fn cancel(
+        &self,
+        peer: &DeviceId,
+        request: TransferCancel,
+        now: Instant,
+    ) -> Result<(), ReceiverError>;
+
+    fn disconnect(&self, peer: &DeviceId) -> Result<usize, ReceiverError>;
 }
 
 /// Synchronous disk endpoint intended to be called by a bounded network/blocking worker.
@@ -73,7 +121,7 @@ impl std::fmt::Debug for ReceiverService {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ReceiverService")
-            .field("output_root", &self.output_root)
+            .field("output_root", &"[REDACTED]")
             .field("policy", &self.policy)
             .field("state", &"[REDACTED]")
             .finish()
@@ -95,13 +143,7 @@ impl ReceiverService {
         policy: ReceiverPolicy,
         progress: Option<mpsc::Sender<ReceiverProgressEvent>>,
     ) -> Result<Self, ReceiverError> {
-        if policy.max_receive_tasks == 0
-            || policy.max_receive_tasks > MAX_RECEIVER_TASKS
-            || policy.max_file_streams == 0
-            || policy.max_file_streams > MAX_RECEIVER_FILE_STREAMS
-        {
-            return Err(ReceiverError::InvalidLimits);
-        }
+        policy.validate()?;
         fs::create_dir_all(output_root.as_ref())?;
         let output_root = output_root.as_ref().to_path_buf();
         let output_dir = Dir::open_ambient_dir(&output_root, ambient_authority())?;
@@ -291,6 +333,28 @@ impl ReceiverService {
         request: TransferComplete,
         now: Instant,
     ) -> Result<TransferCompleteAck, ReceiverError> {
+        self.complete_inner(peer, request, now, None)
+    }
+
+    /// Completes against an immutable receiver-local destination plan.
+    pub fn complete_with_plan(
+        &self,
+        peer: &DeviceId,
+        request: TransferComplete,
+        now: Instant,
+        plan: &DestinationPlan,
+    ) -> Result<TransferCompleteAck, ReceiverError> {
+        plan.validate()?;
+        self.complete_inner(peer, request, now, Some(plan))
+    }
+
+    fn complete_inner(
+        &self,
+        peer: &DeviceId,
+        request: TransferComplete,
+        now: Instant,
+        plan: Option<&DestinationPlan>,
+    ) -> Result<TransferCompleteAck, ReceiverError> {
         let authorized = self.authorize(
             &request.authorization,
             peer,
@@ -303,6 +367,9 @@ impl ReceiverService {
         }
         let mut state = self.lock_state()?;
         let transfer = self.ensure_transfer(&mut state, peer, authorized)?;
+        if let Some(plan) = plan {
+            plan.validate_for_offer(&transfer.offer)?;
+        }
         if transfer.store.transfer_status() == TransferStatus::Completed {
             if transfer.completed_text.is_none() {
                 transfer.completed_text = load_text_payload(&mut transfer.store, &transfer.offer)?;
@@ -340,7 +407,11 @@ impl ReceiverService {
                 .map(|entry| Ok((entry.id, RelativePath::parse(&entry.relative_path)?)))
                 .collect::<Result<Vec<_>, ReceiverError>>()?;
             directories.sort_by_key(|(_, path)| path.as_str().matches('/').count());
-            self.commit_directories_batch(&mut transfer.store, &directories)?;
+            if let Some(plan) = plan {
+                self.commit_directories_planned(&mut transfer.store, &directories, plan)?;
+            } else {
+                self.commit_directories_batch(&mut transfer.store, &directories)?;
+            }
             let mut completed_text = None;
             let mut file_entries = Vec::new();
             for entry in &transfer.offer.entries {
@@ -352,17 +423,30 @@ impl ReceiverService {
                     ManifestEntryKind::Directory | ManifestEntryKind::Symlink { .. } => {}
                 }
             }
-            let _outcomes: Vec<CommitOutcome> = transfer
-                .store
-                .commit_files_batch(&file_entries, self.policy.conflict)?;
+            let _outcomes: Vec<CommitOutcome> = if let Some(plan) = plan {
+                transfer
+                    .store
+                    .commit_files_planned(&file_entries, plan, crate::FaultPoint::None)
+                    .map_err(map_planned_store_error)?
+            } else {
+                transfer
+                    .store
+                    .commit_files_batch(&file_entries, self.policy.conflict)?
+            };
             for entry in &transfer.offer.entries {
                 if let ManifestEntryKind::Symlink { target } = &entry.kind {
-                    self.commit_symlink(
-                        &mut transfer.store,
-                        entry.id,
-                        &RelativePath::parse(&entry.relative_path)?,
-                        target,
-                    )?;
+                    let requested = RelativePath::parse(&entry.relative_path)?;
+                    if let Some(plan) = plan {
+                        self.commit_symlink_planned(
+                            &mut transfer.store,
+                            entry.id,
+                            plan,
+                            &requested,
+                            target,
+                        )?;
+                    } else {
+                        self.commit_symlink(&mut transfer.store, entry.id, &requested, target)?;
+                    }
                 }
             }
             Ok(completed_text)
@@ -489,6 +573,22 @@ impl ReceiverService {
         Ok(TransferStore::list_staging(&self.output_root)?)
     }
 
+    /// Reports whether a transfer reserves a receiver task; an uninitialized service
+    /// is considered active so concurrent router creation cannot bypass the limit.
+    pub fn is_active(&self, transfer_id: TransferId) -> bool {
+        self.state.lock().map_or(true, |state| {
+            state.transfers.get(&transfer_id).is_none_or(|transfer| {
+                matches!(
+                    transfer.store.transfer_status(),
+                    TransferStatus::Accepted
+                        | TransferStatus::Transferring
+                        | TransferStatus::Paused
+                        | TransferStatus::Verifying
+                )
+            })
+        })
+    }
+
     /// Local administrative cleanup; never called automatically after a network error.
     pub fn cleanup(&self, transfer_id: TransferId) -> Result<(), ReceiverError> {
         let mut state = self.lock_state()?;
@@ -607,6 +707,126 @@ impl ReceiverService {
             .authorize(&token, peer, transfer_id, permission, now)?)
     }
 
+    fn commit_directories_planned(
+        &self,
+        store: &mut TransferStore,
+        directories: &[(quick_share_protocol::EntryId, RelativePath)],
+        plan: &DestinationPlan,
+    ) -> Result<(), ReceiverError> {
+        let mut intents = Vec::new();
+        let mut commits = Vec::new();
+        for (entry_id, _) in directories {
+            let disposition = plan
+                .entry(*entry_id)
+                .ok_or(ReceiverError::ManifestChanged)?;
+            match store.metadata_state(*entry_id)? {
+                MetadataState::Committed { destination } => {
+                    if !matches!(
+                        disposition,
+                        DestinationDisposition::Commit { relative_path, .. }
+                            if relative_path == &destination
+                    ) {
+                        return Err(ReceiverError::ManifestChanged);
+                    }
+                    continue;
+                }
+                MetadataState::Skipped => {
+                    if !matches!(disposition, DestinationDisposition::Skip) {
+                        return Err(ReceiverError::ManifestChanged);
+                    }
+                    continue;
+                }
+                MetadataState::Committing { destination } => {
+                    let DestinationDisposition::Commit {
+                        relative_path,
+                        replace_existing,
+                    } = disposition
+                    else {
+                        return Err(ReceiverError::ManifestChanged);
+                    };
+                    if &destination != relative_path {
+                        return Err(ReceiverError::ManifestChanged);
+                    }
+                    commits.push((*entry_id, destination, *replace_existing));
+                }
+                MetadataState::Pending => match disposition {
+                    DestinationDisposition::Skip => {
+                        store.finish_metadata_commit(*entry_id, true)?;
+                    }
+                    DestinationDisposition::Commit {
+                        relative_path,
+                        replace_existing,
+                    } => {
+                        match resolve_destination(
+                            &self.output_root,
+                            relative_path,
+                            ConflictPolicy::Error,
+                        ) {
+                            Ok(_) => {}
+                            Err(PathError::DestinationExists(path)) => {
+                                let metadata = fs::symlink_metadata(&path)?;
+                                if metadata.file_type().is_symlink() {
+                                    return Err(PathError::SymlinkAncestor(path).into());
+                                }
+                                if !replace_existing {
+                                    return Err(ReceiverError::ConflictPending {
+                                        entry_id: *entry_id,
+                                    });
+                                }
+                            }
+                            Err(error) => return Err(error.into()),
+                        }
+                        intents.push((*entry_id, relative_path.clone()));
+                        commits.push((*entry_id, relative_path.clone(), *replace_existing));
+                    }
+                },
+            }
+        }
+        if !intents.is_empty() {
+            store.begin_metadata_batch(&intents)?;
+        }
+
+        let mut completed = Vec::with_capacity(commits.len());
+        for (entry_id, relative, replace_existing) in commits {
+            let absolute = relative.resolve_under(&self.output_root);
+            match fs::symlink_metadata(&absolute) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(PathError::SymlinkAncestor(absolute).into());
+                }
+                Ok(metadata) if metadata.is_dir() && replace_existing => {}
+                Ok(metadata) if !metadata.is_dir() && replace_existing => {
+                    self.output_dir.remove_file(relative.as_str())?;
+                    self.output_dir.create_dir_all(relative.as_str())?;
+                }
+                Ok(_) => return Err(ReceiverError::ConflictPending { entry_id }),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    let create = if replace_existing {
+                        self.output_dir.create_dir_all(relative.as_str())
+                    } else {
+                        let destination = PathBuf::from(relative.as_str());
+                        if let Some(parent) = destination.parent() {
+                            self.output_dir.create_dir_all(parent)?;
+                        }
+                        self.output_dir.create_dir(&destination)
+                    };
+                    match create {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                            return Err(ReceiverError::ConflictPending { entry_id });
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+            completed.push(entry_id);
+        }
+        if !completed.is_empty() {
+            store.finish_metadata_batch(&completed)?;
+        }
+        Ok(())
+    }
+
     fn commit_directories_batch(
         &self,
         store: &mut TransferStore,
@@ -659,6 +879,107 @@ impl ReceiverService {
         if !completed.is_empty() {
             store.finish_metadata_batch(&completed)?;
         }
+        Ok(())
+    }
+
+    fn commit_symlink_planned(
+        &self,
+        store: &mut TransferStore,
+        entry_id: quick_share_protocol::EntryId,
+        plan: &DestinationPlan,
+        requested: &RelativePath,
+        target: &str,
+    ) -> Result<(), ReceiverError> {
+        let disposition = plan.entry(entry_id).ok_or(ReceiverError::ManifestChanged)?;
+        let metadata_state = store.metadata_state(entry_id)?;
+        if matches!(disposition, DestinationDisposition::Skip) {
+            return match metadata_state {
+                MetadataState::Pending => {
+                    store.finish_metadata_commit(entry_id, true)?;
+                    Ok(())
+                }
+                MetadataState::Skipped => Ok(()),
+                MetadataState::Committing { .. } | MetadataState::Committed { .. } => {
+                    Err(ReceiverError::ManifestChanged)
+                }
+            };
+        }
+        let DestinationDisposition::Commit {
+            relative_path,
+            replace_existing,
+        } = disposition
+        else {
+            return Err(ReceiverError::ManifestChanged);
+        };
+        let relative = match metadata_state {
+            MetadataState::Committed { destination } => {
+                if relative_path != &destination {
+                    return Err(ReceiverError::ManifestChanged);
+                }
+                return Ok(());
+            }
+            MetadataState::Skipped => return Err(ReceiverError::ManifestChanged),
+            MetadataState::Committing { destination } => {
+                if &destination != relative_path {
+                    return Err(ReceiverError::ManifestChanged);
+                }
+                destination
+            }
+            MetadataState::Pending => {
+                match resolve_destination(&self.output_root, relative_path, ConflictPolicy::Error) {
+                    Ok(_) => {}
+                    Err(PathError::DestinationExists(_)) if *replace_existing => {}
+                    Err(PathError::DestinationExists(_)) => {
+                        return Err(ReceiverError::ConflictPending { entry_id });
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+                store.begin_metadata_commit(entry_id, relative_path)?;
+                relative_path.clone()
+            }
+        };
+        let destination = PathBuf::from(relative.as_str());
+        let absolute = relative.resolve_under(&self.output_root);
+        if let Ok(metadata) = fs::symlink_metadata(&absolute) {
+            if metadata.file_type().is_symlink()
+                && link_target_matches(&fs::read_link(&absolute)?, target)
+            {
+                store.finish_metadata_commit(entry_id, false)?;
+                return Ok(());
+            }
+            if !replace_existing || metadata.is_dir() {
+                return Err(ReceiverError::ConflictPending { entry_id });
+            }
+            self.output_dir.remove_file(&destination)?;
+        }
+        if let Some(parent) = destination.parent() {
+            self.output_dir.create_dir_all(parent)?;
+        }
+        match SymlinkDisposition::classify(requested, target, true) {
+            SymlinkDisposition::Create => {
+                match create_cap_symlink(&self.output_dir, target, &destination) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        return Err(ReceiverError::ConflictPending { entry_id });
+                    }
+                    Err(error) if symlink_unavailable(&error) => self.save_symlink_notice(
+                        &destination,
+                        target,
+                        "native symbolic-link creation is unavailable",
+                    )?,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            SymlinkDisposition::NeedsConfirmation { .. } => self.save_symlink_notice(
+                &destination,
+                target,
+                "target requires explicit confirmation",
+            )?,
+            SymlinkDisposition::SaveAsNotice { reason } => {
+                self.save_symlink_notice(&destination, target, reason)?;
+            }
+        }
+        store.finish_metadata_commit(entry_id, false)?;
         Ok(())
     }
 
@@ -793,6 +1114,49 @@ impl ReceiverService {
     }
 }
 
+impl ReceiverEndpoint for ReceiverService {
+    fn status(
+        &self,
+        peer: &DeviceId,
+        request: TransferStatusRequest,
+        now: Instant,
+    ) -> Result<TransferStatusResponse, ReceiverError> {
+        ReceiverService::status(self, peer, request, now)
+    }
+
+    fn receive_chunk(
+        &self,
+        peer: &DeviceId,
+        request_id: RequestId,
+        frame: ChunkData,
+        now: Instant,
+    ) -> Result<Option<ChunkAck>, ReceiverError> {
+        ReceiverService::receive_chunk(self, peer, request_id, frame, now)
+    }
+
+    fn complete(
+        &self,
+        peer: &DeviceId,
+        request: TransferComplete,
+        now: Instant,
+    ) -> Result<TransferCompleteAck, ReceiverError> {
+        ReceiverService::complete(self, peer, request, now)
+    }
+
+    fn cancel(
+        &self,
+        peer: &DeviceId,
+        request: TransferCancel,
+        now: Instant,
+    ) -> Result<(), ReceiverError> {
+        ReceiverService::cancel(self, peer, request, now)
+    }
+
+    fn disconnect(&self, peer: &DeviceId) -> Result<usize, ReceiverError> {
+        ReceiverService::disconnect(self, peer)
+    }
+}
+
 #[derive(Default)]
 struct ReceiverState {
     transfers: BTreeMap<TransferId, ActiveTransfer>,
@@ -810,6 +1174,13 @@ struct ActiveTransfer {
     last_reported_status: TransferStatus,
     cancellation: CancellationToken,
     completed_text: Option<TextPayload>,
+}
+
+fn map_planned_store_error(error: StoreError) -> ReceiverError {
+    match error {
+        StoreError::ConflictPending { entry_id } => ReceiverError::ConflictPending { entry_id },
+        error => ReceiverError::Store(error),
+    }
 }
 
 fn load_text_payload(
@@ -966,6 +1337,10 @@ pub enum ReceiverError {
     UploadsActive,
     #[error("transfer is incomplete")]
     Incomplete,
+    #[error("destination changed after planning for entry {entry_id:?}")]
+    ConflictPending {
+        entry_id: quick_share_protocol::EntryId,
+    },
     #[error("transfer is in terminal state {0:?}")]
     Terminal(TransferStatus),
     #[error("transfer was not found")]
@@ -978,6 +1353,8 @@ pub enum ReceiverError {
     Offer(#[from] OfferError),
     #[error(transparent)]
     Path(#[from] PathError),
+    #[error(transparent)]
+    DestinationPlan(#[from] DestinationPlanError),
     #[error("receiver I/O error: {0}")]
     Io(#[from] io::Error),
     #[error("receiver state is unavailable")]

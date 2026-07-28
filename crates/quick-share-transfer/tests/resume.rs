@@ -110,6 +110,7 @@ async fn setup(
     let transfer_offer = TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id,
+        initiated_by: None,
         sender: DeviceInfo {
             device_id: peer.device_id().clone(),
             name: peer.claimed_name().to_owned(),
@@ -156,6 +157,7 @@ fn offer_from_plan(peer: &PeerAuthContext, plan: &TransferPlan) -> TransferOffer
     TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id: plan.transfer_id,
+        initiated_by: None,
         sender: DeviceInfo {
             device_id: peer.device_id().clone(),
             name: peer.claimed_name().to_owned(),

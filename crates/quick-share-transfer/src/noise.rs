@@ -9,8 +9,9 @@
 
 use quick_share_core::identity::{DeviceIdentity, device_id_from_public_key};
 use quick_share_protocol::{
-    ChunkAck, ChunkData, DeviceId, InfoRequest, InfoResponse, MessageType, OfferCreate,
-    OfferStatusRequest, OfferStatusResponse, ProtocolError, RequestId, TransferCancel,
+    Capability, ChunkAck, ChunkData, DeviceId, InfoRequest, InfoResponse, MessageType,
+    NegotiatedProtocol, OfferCreate, OfferStatusRequest, OfferStatusResponse, ProtocolError,
+    ProtocolVersion, RequestId, SourceSelectionRequest, SourceSelectionResponse, TransferCancel,
     TransferComplete, TransferCompleteAck, TransferStatusRequest, TransferStatusResponse,
     ValidationError,
 };
@@ -410,8 +411,36 @@ impl ControlPayload for ProtocolError {
     }
 }
 
-/// Strictly serializes a validated control payload into one logical Noise application frame.
+impl ControlPayload for SourceSelectionRequest {
+    const MESSAGE_TYPE: MessageType = MessageType::SourceSelectionRequest;
+
+    fn validate_control(&self) -> Result<(), ValidationError> {
+        self.validate()
+    }
+}
+
+impl ControlPayload for SourceSelectionResponse {
+    const MESSAGE_TYPE: MessageType = MessageType::SourceSelectionResponse;
+
+    fn validate_control(&self) -> Result<(), ValidationError> {
+        self.validate()
+    }
+}
+
+/// Strictly serializes a validated baseline control payload.
+/// QSP/1.1 selection messages require `encode_negotiated_control_frame`.
 pub fn encode_control_frame<T: ControlPayload>(
+    message_type: MessageType,
+    request_id: RequestId,
+    value: &T,
+) -> Result<ApplicationFrame, NoiseError> {
+    if is_selection_message(message_type) {
+        return Err(NoiseError::InvalidControlPayload);
+    }
+    encode_control_frame_inner(message_type, request_id, value)
+}
+
+fn encode_control_frame_inner<T: ControlPayload>(
     message_type: MessageType,
     request_id: RequestId,
     value: &T,
@@ -433,8 +462,62 @@ pub fn encode_control_frame<T: ControlPayload>(
     })
 }
 
-/// Strictly decodes and semantically validates a control frame of the expected kind.
+/// Encodes only control messages enabled by the authenticated INFO negotiation.
+pub fn encode_negotiated_control_frame<T: ControlPayload>(
+    negotiated: &NegotiatedProtocol,
+    message_type: MessageType,
+    request_id: RequestId,
+    value: &T,
+) -> Result<ApplicationFrame, NoiseError> {
+    require_negotiated_message(negotiated, message_type)?;
+    encode_control_frame_inner(message_type, request_id, value)
+}
+
+/// Decodes only control messages enabled by the authenticated INFO negotiation.
+pub fn decode_negotiated_control_frame<T: ControlPayload>(
+    negotiated: &NegotiatedProtocol,
+    frame: &ApplicationFrame,
+    expected_type: MessageType,
+) -> Result<T, NoiseError> {
+    require_negotiated_message(negotiated, expected_type)?;
+    decode_control_frame_inner(frame, expected_type)
+}
+
+const fn is_selection_message(message_type: MessageType) -> bool {
+    matches!(
+        message_type,
+        MessageType::SourceSelectionRequest | MessageType::SourceSelectionResponse
+    )
+}
+
+fn require_negotiated_message(
+    negotiated: &NegotiatedProtocol,
+    message_type: MessageType,
+) -> Result<(), NoiseError> {
+    if is_selection_message(message_type)
+        && (negotiated.version < ProtocolVersion::V1_1
+            || !negotiated
+                .capabilities
+                .contains(&Capability::RemoteSelection))
+    {
+        return Err(NoiseError::InvalidControlPayload);
+    }
+    Ok(())
+}
+
+/// Strictly decodes a baseline control frame.
+/// QSP/1.1 selection messages require `decode_negotiated_control_frame`.
 pub fn decode_control_frame<T: ControlPayload>(
+    frame: &ApplicationFrame,
+    expected_type: MessageType,
+) -> Result<T, NoiseError> {
+    if is_selection_message(expected_type) {
+        return Err(NoiseError::InvalidControlPayload);
+    }
+    decode_control_frame_inner(frame, expected_type)
+}
+
+fn decode_control_frame_inner<T: ControlPayload>(
     frame: &ApplicationFrame,
     expected_type: MessageType,
 ) -> Result<T, NoiseError> {

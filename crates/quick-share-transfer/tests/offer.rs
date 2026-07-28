@@ -54,6 +54,7 @@ fn offer(peer: &PeerAuthContext, transfer_id: TransferId, size: u64) -> Transfer
     TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id,
+        initiated_by: None,
         sender: DeviceInfo {
             device_id: peer.device_id().clone(),
             name: peer.claimed_name().to_owned(),

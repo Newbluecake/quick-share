@@ -3,16 +3,20 @@
 
 pub mod auth;
 pub mod direct;
+pub mod expected_offer;
 pub mod network;
 pub mod noise;
 pub mod offer;
 pub mod receiver;
+pub mod receiver_router;
+pub mod selection;
 pub mod sender;
 pub mod text;
 
 use cap_std::{ambient_authority, fs::Dir};
 use quick_share_core::{
     config::ConflictPolicy,
+    destination::{DestinationDisposition, DestinationPlan},
     paths::{PathError, RelativePath, resolve_destination},
 };
 use quick_share_platform::{FileSensitivity, StorageError, atomic_write};
@@ -945,6 +949,179 @@ impl TransferStore {
             .collect()
     }
 
+    /// Commits payload files to the exact validated destinations in a persisted plan.
+    /// No-clobber entries report `ConflictPending` if a destination appears after planning.
+    pub fn commit_files_planned(
+        &mut self,
+        entry_ids: &[EntryId],
+        plan: &DestinationPlan,
+        fault: FaultPoint,
+    ) -> Result<Vec<CommitOutcome>, StoreError> {
+        plan.validate()
+            .map_err(|error| StoreError::InvalidManifest(error.to_string()))?;
+        if entry_ids.len() > MAX_MANIFEST_ENTRIES
+            || entry_ids.iter().copied().collect::<BTreeSet<_>>().len() != entry_ids.len()
+        {
+            return Err(StoreError::InvalidManifest(
+                "planned batch contains too many or duplicate entries".to_owned(),
+            ));
+        }
+        let entry_ids = entry_ids.to_vec();
+        let mut commits = Vec::with_capacity(entry_ids.len());
+        let mut outcomes = Vec::with_capacity(entry_ids.len());
+
+        for &entry_id in &entry_ids {
+            let disposition = plan.entry(entry_id).ok_or_else(|| {
+                StoreError::InvalidManifest(
+                    "destination plan is missing a payload entry".to_owned(),
+                )
+            })?;
+            let file = self.file(entry_id)?.clone();
+            let state_index = self.state_index(entry_id)?;
+            match self.journal.entries[state_index].status.clone() {
+                EntryStatus::Committed { destination } => {
+                    if !matches!(
+                        disposition,
+                        DestinationDisposition::Commit { relative_path, .. }
+                            if relative_path.as_str() == destination
+                    ) {
+                        return Err(StoreError::InvalidJournal(
+                            "destination plan changed an already committed entry".to_owned(),
+                        ));
+                    }
+                    outcomes.push(Some(CommitOutcome::Committed(
+                        RelativePath::parse(destination)?.resolve_under(&self.output_root),
+                    )));
+                    commits.push(None);
+                    continue;
+                }
+                EntryStatus::Skipped => {
+                    if !matches!(disposition, DestinationDisposition::Skip) {
+                        return Err(StoreError::InvalidJournal(
+                            "destination plan changed an already skipped entry".to_owned(),
+                        ));
+                    }
+                    outcomes.push(Some(CommitOutcome::Skipped));
+                    commits.push(None);
+                    continue;
+                }
+                EntryStatus::Committing { .. } if self.part_path(entry_id).exists() => {
+                    self.journal.entries[state_index].status = EntryStatus::Verified;
+                }
+                EntryStatus::Committing { .. } => {
+                    self.reconcile_commit_intents()?;
+                    return self.commit_files_planned(&entry_ids, plan, fault);
+                }
+                EntryStatus::Receiving | EntryStatus::Verified => {}
+            }
+            if !self.missing_chunks(entry_id)?.is_empty() {
+                return Err(StoreError::Incomplete(entry_id));
+            }
+            if hash_file(self.part_path(entry_id))? != file.decoded_digest()? {
+                return Err(StoreError::FinalDigestMismatch { entry_id });
+            }
+
+            match disposition {
+                DestinationDisposition::Skip => {
+                    self.journal.entries[state_index].status = EntryStatus::Skipped;
+                    commits.push(None);
+                    outcomes.push(Some(CommitOutcome::Skipped));
+                }
+                DestinationDisposition::Commit {
+                    relative_path,
+                    replace_existing,
+                } => {
+                    match resolve_destination(
+                        &self.output_root,
+                        relative_path,
+                        ConflictPolicy::Error,
+                    ) {
+                        Ok(_) => {}
+                        Err(PathError::DestinationExists(_)) if *replace_existing => {}
+                        Err(PathError::DestinationExists(_)) => {
+                            return Err(StoreError::ConflictPending { entry_id });
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                    self.journal.entries[state_index].status = EntryStatus::Committing {
+                        destination: relative_path.as_str().to_owned(),
+                    };
+                    commits.push(Some((entry_id, relative_path.clone(), *replace_existing)));
+                    outcomes.push(None);
+                }
+            }
+        }
+        self.save_journal()?;
+        if fault == FaultPoint::AfterCommitIntent {
+            return Err(StoreError::InjectedFault(fault));
+        }
+
+        let mut parents = BTreeSet::new();
+        let mut renamed = false;
+        for (index, commit) in commits.into_iter().enumerate() {
+            let Some((entry_id, relative, replace_existing)) = commit else {
+                continue;
+            };
+            let final_path = relative.resolve_under(&self.output_root);
+            let destination_relative = PathBuf::from(relative.as_str());
+            if let Some(parent) = destination_relative.parent() {
+                self.output_dir.create_dir_all(parent)?;
+                parents.insert(parent.to_path_buf());
+            } else {
+                parents.insert(PathBuf::new());
+            }
+            let source_relative = self.part_relative_path(entry_id);
+            if replace_existing {
+                self.output_dir.rename(
+                    &source_relative,
+                    &self.output_dir,
+                    &destination_relative,
+                )?;
+            } else {
+                self.output_dir
+                    .hard_link(&source_relative, &self.output_dir, &destination_relative)
+                    .map_err(|error| {
+                        if error.kind() == io::ErrorKind::AlreadyExists {
+                            StoreError::ConflictPending { entry_id }
+                        } else {
+                            StoreError::Io(error)
+                        }
+                    })?;
+                self.output_dir.remove_file(&source_relative)?;
+            }
+            renamed = true;
+            let state_index = self.state_index(entry_id)?;
+            self.journal.entries[state_index].status = EntryStatus::Committed {
+                destination: relative.as_str().to_owned(),
+            };
+            outcomes[index] = Some(CommitOutcome::Committed(final_path));
+            if fault == FaultPoint::AfterFileRename {
+                return Err(StoreError::InjectedFault(fault));
+            }
+        }
+        for parent in parents {
+            sync_parent_path(
+                &self.output_root,
+                (!parent.as_os_str().is_empty()).then_some(parent.as_path()),
+            )?;
+        }
+        if fault == FaultPoint::BeforeJournalReplace && renamed {
+            return Err(StoreError::InjectedFault(fault));
+        }
+        self.save_journal()?;
+        if fault == FaultPoint::AfterJournalReplace && renamed {
+            return Err(StoreError::InjectedFault(fault));
+        }
+        outcomes
+            .into_iter()
+            .map(|outcome| {
+                outcome.ok_or_else(|| {
+                    StoreError::InvalidJournal("planned commit produced no outcome".to_owned())
+                })
+            })
+            .collect()
+    }
+
     fn finish_commit(
         &mut self,
         entry_id: EntryId,
@@ -1628,6 +1805,8 @@ pub enum StoreError {
     ConflictingChunk { entry_id: EntryId, index: u32 },
     #[error("entry {0:?} is incomplete")]
     Incomplete(EntryId),
+    #[error("destination changed after planning for entry {entry_id:?}")]
+    ConflictPending { entry_id: EntryId },
     #[error("verified payload exceeds the in-memory delivery bound")]
     PayloadTooLarge,
     #[error("final digest mismatch for entry {entry_id:?}")]

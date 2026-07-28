@@ -2,8 +2,9 @@ use proptest::prelude::*;
 use quick_share_core::identity::{DeviceIdentity, IdentityStore};
 use quick_share_protocol::{
     AuthorizationProof, Capability, ChunkData, ChunkDescriptor, DeviceInfo, EntryId, ErrorCode,
-    InfoRequest, InfoResponse, MAX_CHUNK_FRAME_BYTES, MessageType, ProtocolError, ProtocolVersion,
-    RequestId, TransferId,
+    InfoRequest, InfoResponse, MAX_CHUNK_FRAME_BYTES, MessageType, NegotiatedProtocol,
+    ProtocolError, ProtocolVersion, RequestId, SourceSelectionRequest, SourceSelectionResponse,
+    SourceSelectionStatus, TransferId,
 };
 use quick_share_transfer::network::{
     NetworkError, NetworkSession, read_handshake_packet as read_network_handshake_packet,
@@ -11,8 +12,9 @@ use quick_share_transfer::network::{
 };
 use quick_share_transfer::noise::{
     ApplicationFrame, HandshakeEvidence, NoiseError, NoiseHandshake, NoiseRole, SasCode,
-    SecureChannel, decode_control_frame, encode_control_frame, read_handshake_packet, read_record,
-    write_handshake_packet, write_record,
+    SecureChannel, decode_control_frame, decode_negotiated_control_frame, encode_control_frame,
+    encode_negotiated_control_frame, read_handshake_packet, read_record, write_handshake_packet,
+    write_record,
 };
 use std::{
     io::Cursor,
@@ -406,6 +408,103 @@ fn strict_control_codec_binds_payload_to_assigned_message_type() {
     };
     assert!(
         decode_control_frame::<InfoResponse>(&invalid_frame, MessageType::InfoResponse).is_err()
+    );
+
+    let selection = SourceSelectionRequest {
+        requester: DeviceInfo {
+            device_id: identity.device_id(),
+            name: "requester".to_owned(),
+            capabilities: std::collections::BTreeSet::from([Capability::Files]),
+        },
+        callback_port: 4242,
+    };
+    let qsp_1_0 = NegotiatedProtocol {
+        version: ProtocolVersion::V1_0,
+        capabilities: std::collections::BTreeSet::from([Capability::Files]),
+    };
+    let qsp_1_1 = NegotiatedProtocol {
+        version: ProtocolVersion::V1_1,
+        capabilities: std::collections::BTreeSet::from([Capability::RemoteSelection]),
+    };
+    assert!(
+        encode_control_frame(
+            MessageType::SourceSelectionRequest,
+            request_id(),
+            &selection,
+        )
+        .is_err()
+    );
+    assert!(
+        encode_negotiated_control_frame(
+            &qsp_1_0,
+            MessageType::SourceSelectionRequest,
+            request_id(),
+            &selection,
+        )
+        .is_err()
+    );
+    let selection_frame = encode_negotiated_control_frame(
+        &qsp_1_1,
+        MessageType::SourceSelectionRequest,
+        request_id(),
+        &selection,
+    )
+    .expect("negotiated selection");
+    assert!(
+        decode_control_frame::<SourceSelectionRequest>(
+            &selection_frame,
+            MessageType::SourceSelectionRequest,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        decode_negotiated_control_frame::<SourceSelectionRequest>(
+            &qsp_1_1,
+            &selection_frame,
+            MessageType::SourceSelectionRequest,
+        )
+        .expect("negotiated decode"),
+        selection
+    );
+    assert!(
+        decode_negotiated_control_frame::<SourceSelectionRequest>(
+            &qsp_1_0,
+            &selection_frame,
+            MessageType::SourceSelectionRequest,
+        )
+        .is_err()
+    );
+    assert!(
+        encode_negotiated_control_frame(
+            &qsp_1_1,
+            MessageType::SourceSelectionRequest,
+            request_id(),
+            &SourceSelectionRequest {
+                callback_port: 0,
+                ..selection
+            },
+        )
+        .is_err()
+    );
+    let response = SourceSelectionResponse {
+        status: SourceSelectionStatus::Ready,
+        transfer_id: Some(TransferId::new(Uuid::now_v7())),
+    };
+    let response_frame = encode_negotiated_control_frame(
+        &qsp_1_1,
+        MessageType::SourceSelectionResponse,
+        request_id(),
+        &response,
+    )
+    .expect("encode source selection response");
+    assert_eq!(
+        decode_negotiated_control_frame::<SourceSelectionResponse>(
+            &qsp_1_1,
+            &response_frame,
+            MessageType::SourceSelectionResponse,
+        )
+        .expect("decode source selection response"),
+        response
     );
 
     let chunk = ChunkData {

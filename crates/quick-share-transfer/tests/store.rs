@@ -1,5 +1,12 @@
-use quick_share_core::{config::ConflictPolicy, paths::RelativePath};
-use quick_share_protocol::{ChunkDescriptor, DeviceId, EntryId, TransferId};
+use quick_share_core::{
+    config::ConflictPolicy,
+    destination::{ConflictDecision, ConflictSelections, DestinationPlan},
+    paths::RelativePath,
+};
+use quick_share_protocol::{
+    Capability, ChunkDescriptor, ContentKind, DeviceId, DeviceInfo, EntryId, ManifestEntry,
+    ManifestEntryKind, ProtocolVersion, TransferId, TransferOffer,
+};
 use quick_share_transfer::{
     ChunkBegin, CommitOutcome, FaultPoint, MetadataState, StagedFile, StoreError, TransferStore,
     hash_file,
@@ -21,6 +28,29 @@ fn sender_id() -> DeviceId {
 }
 fn digest(bytes: &[u8]) -> [u8; 32] {
     *blake3::hash(bytes).as_bytes()
+}
+
+fn destination_offer(id: TransferId, path: &str, bytes: &[u8]) -> TransferOffer {
+    TransferOffer {
+        protocol_version: ProtocolVersion::V1_0,
+        transfer_id: id,
+        initiated_by: None,
+        sender: DeviceInfo {
+            device_id: sender_id(),
+            name: "sender".to_owned(),
+            capabilities: [Capability::Files].into_iter().collect(),
+        },
+        content_kind: ContentKind::Files,
+        chunk_size: CHUNK_SIZE,
+        total_bytes: bytes.len() as u64,
+        entries: vec![ManifestEntry {
+            id: entry_id(),
+            relative_path: path.to_owned(),
+            kind: ManifestEntryKind::File,
+            size: bytes.len() as u64,
+            digest: Some(digest(bytes)),
+        }],
+    }
 }
 
 fn descriptor(transfer_id: TransferId, index: u32, bytes: &[u8]) -> ChunkDescriptor {
@@ -551,6 +581,207 @@ fn conflict_policies_never_silently_overwrite() {
         outcome,
         CommitOutcome::Committed(root.path().join("report (1).txt"))
     );
+}
+
+#[test]
+fn planned_commit_uses_exact_rename_and_skip_dispositions() {
+    let renamed_root = tempdir().expect("rename root");
+    let bytes = b"renamed payload";
+    let rename_id = transfer_id();
+    fs::write(renamed_root.path().join("report.txt"), b"existing").expect("existing");
+    let rename_offer = destination_offer(rename_id, "report.txt", bytes);
+    let rename_plan = DestinationPlan::build(
+        renamed_root.path(),
+        &rename_offer,
+        &ConflictSelections::default().with_entry(entry_id(), ConflictDecision::Rename),
+    )
+    .expect("rename plan");
+    let rename_spec = StagedFile::new(
+        entry_id(),
+        RelativePath::parse("report.txt").expect("relative"),
+        bytes.len() as u64,
+        CHUNK_SIZE,
+        digest(bytes),
+    )
+    .expect("spec");
+    let mut rename_store = TransferStore::create_bound(
+        renamed_root.path(),
+        rename_id,
+        sender_id(),
+        vec![rename_spec],
+        digest(&serde_json::to_vec(&rename_offer).expect("offer")),
+    )
+    .expect("store");
+    rename_store
+        .write_chunk(
+            entry_id(),
+            &descriptor(rename_id, 0, bytes),
+            bytes,
+            FaultPoint::None,
+        )
+        .expect("chunk");
+    rename_store
+        .commit_files_planned(&[entry_id()], &rename_plan, FaultPoint::None)
+        .expect("rename commit");
+    assert_eq!(
+        fs::read(renamed_root.path().join("report.txt")).expect("existing"),
+        b"existing"
+    );
+    assert_eq!(
+        fs::read(renamed_root.path().join("report (1).txt")).expect("renamed"),
+        bytes
+    );
+
+    let skipped_root = tempdir().expect("skip root");
+    fs::write(skipped_root.path().join("report.txt"), b"existing").expect("existing");
+    let skip_id = transfer_id();
+    let skip_offer = destination_offer(skip_id, "report.txt", bytes);
+    let skip_plan = DestinationPlan::build(
+        skipped_root.path(),
+        &skip_offer,
+        &ConflictSelections::default().with_entry(entry_id(), ConflictDecision::Skip),
+    )
+    .expect("skip plan");
+    let skip_spec = StagedFile::new(
+        entry_id(),
+        RelativePath::parse("report.txt").expect("relative"),
+        bytes.len() as u64,
+        CHUNK_SIZE,
+        digest(bytes),
+    )
+    .expect("spec");
+    let mut skip_store = TransferStore::create_bound(
+        skipped_root.path(),
+        skip_id,
+        sender_id(),
+        vec![skip_spec],
+        digest(&serde_json::to_vec(&skip_offer).expect("offer")),
+    )
+    .expect("store");
+    skip_store
+        .write_chunk(
+            entry_id(),
+            &descriptor(skip_id, 0, bytes),
+            bytes,
+            FaultPoint::None,
+        )
+        .expect("chunk");
+    assert_eq!(
+        skip_store
+            .commit_files_planned(&[entry_id()], &skip_plan, FaultPoint::None)
+            .expect("skip commit"),
+        vec![CommitOutcome::Skipped]
+    );
+    assert_eq!(
+        fs::read(skipped_root.path().join("report.txt")).expect("existing"),
+        b"existing"
+    );
+}
+
+#[test]
+fn planned_commit_reports_races_then_accepts_an_explicit_updated_overwrite_plan() {
+    let root = tempdir().expect("output root");
+    let bytes = b"planned replacement";
+    let id = transfer_id();
+    let offer = destination_offer(id, "planned.txt", bytes);
+    let initial_plan = DestinationPlan::build(root.path(), &offer, &ConflictSelections::default())
+        .expect("initial no-clobber plan");
+    let spec = StagedFile::new(
+        entry_id(),
+        RelativePath::parse("planned.txt").expect("relative"),
+        bytes.len() as u64,
+        CHUNK_SIZE,
+        digest(bytes),
+    )
+    .expect("spec");
+    let mut store = TransferStore::create_bound(
+        root.path(),
+        id,
+        sender_id(),
+        vec![spec],
+        digest(&serde_json::to_vec(&offer).expect("offer")),
+    )
+    .expect("store");
+    store
+        .write_chunk(
+            entry_id(),
+            &descriptor(id, 0, bytes),
+            bytes,
+            FaultPoint::None,
+        )
+        .expect("chunk");
+    fs::write(root.path().join("planned.txt"), b"racer").expect("race");
+
+    assert!(matches!(
+        store.commit_files_planned(&[entry_id()], &initial_plan, FaultPoint::None),
+        Err(StoreError::ConflictPending { entry_id: pending }) if pending == entry_id()
+    ));
+    let overwrite_plan = DestinationPlan::build(
+        root.path(),
+        &offer,
+        &ConflictSelections::default().with_entry(entry_id(), ConflictDecision::Overwrite),
+    )
+    .expect("updated overwrite plan");
+    let outcomes = store
+        .commit_files_planned(&[entry_id()], &overwrite_plan, FaultPoint::None)
+        .expect("planned overwrite");
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(
+        fs::read(root.path().join("planned.txt")).expect("final"),
+        bytes
+    );
+}
+
+#[test]
+fn planned_commit_intent_and_rename_faults_reconcile_after_restart() {
+    for fault in [
+        FaultPoint::AfterCommitIntent,
+        FaultPoint::AfterFileRename,
+        FaultPoint::BeforeJournalReplace,
+        FaultPoint::AfterJournalReplace,
+    ] {
+        let root = tempdir().expect("output root");
+        let bytes = b"recover planned commit";
+        let id = transfer_id();
+        let offer = destination_offer(id, "recover-planned.txt", bytes);
+        let plan = DestinationPlan::build(root.path(), &offer, &ConflictSelections::default())
+            .expect("plan");
+        let spec = StagedFile::new(
+            entry_id(),
+            RelativePath::parse("recover-planned.txt").expect("relative"),
+            bytes.len() as u64,
+            CHUNK_SIZE,
+            digest(bytes),
+        )
+        .expect("spec");
+        let offer_digest = digest(&serde_json::to_vec(&offer).expect("offer"));
+        let mut store =
+            TransferStore::create_bound(root.path(), id, sender_id(), vec![spec], offer_digest)
+                .expect("store");
+        store
+            .write_chunk(
+                entry_id(),
+                &descriptor(id, 0, bytes),
+                bytes,
+                FaultPoint::None,
+            )
+            .expect("chunk");
+        assert!(matches!(
+            store.commit_files_planned(&[entry_id()], &plan, fault),
+            Err(StoreError::InjectedFault(point)) if point == fault
+        ));
+        drop(store);
+
+        let mut reopened = TransferStore::reopen_bound(root.path(), id, &sender_id(), offer_digest)
+            .expect("reopen");
+        reopened
+            .commit_files_planned(&[entry_id()], &plan, FaultPoint::None)
+            .expect("recover");
+        assert_eq!(
+            fs::read(root.path().join("recover-planned.txt")).expect("final"),
+            bytes
+        );
+    }
 }
 
 #[test]

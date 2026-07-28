@@ -30,7 +30,21 @@ struct FixedPrompt(OfferDecision, bool);
 
 #[async_trait]
 impl OfferPrompt for FixedPrompt {
-    async fn decide(&self, _view: &OfferView) -> Result<(OfferDecision, bool), DirectError> {
+    async fn prepare_expected(
+        &self,
+        _peer: &quick_share_transfer::auth::PeerAuthContext,
+        _view: &OfferView,
+        _offer: &TransferOffer,
+    ) -> Result<(), DirectError> {
+        Ok(())
+    }
+
+    async fn decide(
+        &self,
+        _peer: &quick_share_transfer::auth::PeerAuthContext,
+        _view: &OfferView,
+        _offer: &TransferOffer,
+    ) -> Result<(OfferDecision, bool), DirectError> {
         Ok((self.0, self.1))
     }
 }
@@ -39,7 +53,21 @@ struct SlowPrompt;
 
 #[async_trait]
 impl OfferPrompt for SlowPrompt {
-    async fn decide(&self, _view: &OfferView) -> Result<(OfferDecision, bool), DirectError> {
+    async fn prepare_expected(
+        &self,
+        _peer: &quick_share_transfer::auth::PeerAuthContext,
+        _view: &OfferView,
+        _offer: &TransferOffer,
+    ) -> Result<(), DirectError> {
+        Ok(())
+    }
+
+    async fn decide(
+        &self,
+        _peer: &quick_share_transfer::auth::PeerAuthContext,
+        _view: &OfferView,
+        _offer: &TransferOffer,
+    ) -> Result<(OfferDecision, bool), DirectError> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         Ok((OfferDecision::AcceptOnce, false))
     }
@@ -90,6 +118,7 @@ async fn tcp_noise_offer_status_chunk_and_complete_reach_the_receiver() {
     let offer = TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id,
+        initiated_by: None,
         sender: sender_info.clone(),
         content_kind: ContentKind::Files,
         chunk_size: 256 * 1024,
@@ -139,6 +168,8 @@ async fn tcp_noise_offer_status_chunk_and_complete_reach_the_receiver() {
         offers,
         receiver,
         prompt: Arc::new(FixedPrompt(OfferDecision::AcceptOnce, false)),
+        selection: None,
+        expected_offers: None,
         operation_timeout: Duration::from_secs(5),
     });
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -208,6 +239,7 @@ async fn confirmation_timeout_expires_the_offer_without_authorization() {
     let offer = TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id,
+        initiated_by: None,
         sender: DeviceInfo {
             device_id: sender_identity.device_id(),
             name: "sender".to_owned(),
@@ -256,6 +288,8 @@ async fn confirmation_timeout_expires_the_offer_without_authorization() {
         offers,
         receiver,
         prompt: Arc::new(SlowPrompt),
+        selection: None,
+        expected_offers: None,
         operation_timeout: Duration::from_secs(2),
     });
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -320,6 +354,7 @@ async fn unicode_and_empty_text_cross_noise_without_a_plaintext_temp_file() {
         let offer = TransferOffer {
             protocol_version: ProtocolVersion::V1_0,
             transfer_id,
+            initiated_by: None,
             sender: sender_info,
             content_kind: ContentKind::Text,
             chunk_size: 4 * 1024 * 1024,
@@ -364,6 +399,8 @@ async fn unicode_and_empty_text_cross_noise_without_a_plaintext_temp_file() {
             offers,
             receiver: Arc::clone(&receiver),
             prompt: Arc::new(FixedPrompt(OfferDecision::AcceptOnce, false)),
+            selection: None,
+            expected_offers: None,
             operation_timeout: Duration::from_secs(5),
         });
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))

@@ -269,6 +269,7 @@ fn transfer_plan_binds_wire_manifest_to_local_source_snapshot() {
     let transfer_offer = TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id: TransferId::new(Uuid::now_v7()),
+        initiated_by: None,
         sender: DeviceInfo {
             device_id: DeviceId::parse("qs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("device"),
             name: "sender".to_owned(),
@@ -329,6 +330,7 @@ fn directory_plan_preserves_empty_directories_and_queues_only_regular_payloads()
     let offer = TransferOffer {
         protocol_version: ProtocolVersion::V1_0,
         transfer_id: TransferId::new(Uuid::now_v7()),
+        initiated_by: None,
         sender: DeviceInfo {
             device_id: DeviceId::parse("qs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("device"),
             name: "sender".to_owned(),
