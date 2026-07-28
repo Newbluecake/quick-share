@@ -4,7 +4,7 @@ complexity: complex
 workflow: spec-dev
 preset: normal
 generated_at: 2026-07-27T09:54:11Z
-status: batch-3-awaiting-approval
+status: batch-4-conditional-pass
 ---
 
 # Windows File Picker - SDD Context
@@ -32,7 +32,7 @@ parallel: auto
 | 阶段 2：技术设计 | 已生成并获用户批准 | `windows-file-picker-design.md` |
 | 阶段 3：任务拆分 | 已生成并获用户批准 | `windows-file-picker-tasks.md` |
 | 阶段 4：环境准备 | 已完成 | 主 workspace 基线测试通过；用户选择主工作区 |
-| 阶段 5：代码实施 | Batch 0、Batch 1、Batch 2、Batch 3 已完成 | T-007/T-008/T-009 两阶段评审通过；真机 F-001/F-002/F-003 已验证；等待进入 T-010 总验收 |
+| 阶段 5：代码实施 | Batch 0–Batch 4 已完成 | T-001–T-010 完成；T-010 验收为 CONDITIONAL PASS；等待 T-024 发布验收 |
 
 ## 规划结论
 
@@ -88,4 +88,4 @@ parallel: auto
 
 ## 当前闸门
 
-Batch 0–Batch 3 已全部完成并通过两阶段评审。剩余工作为 T-010 总验收：在真机补齐多文件选择（F-001）、选择取消（F-003）、冲突覆盖/跳过/重命名（F-013/F-014）、更改目录（F-005）、身份变更拒绝、UI 不可用 fail-closed，以及 Linux GUI。最终 `v2.0.0` tag 仍需 T-024 发布验收与 `snow 0.10.0`、macOS 真机门。
+Batch 0–Batch 4（T-001–T-010）已全部完成。T-010 验收结论为 **CONDITIONAL PASS**（`windows-file-picker-acceptance-report.md`）：自动化门全部通过，真机已验证单文件与文件夹传输，F-001–F-020 均有测试或真机证据。尚待显式最终验收的真机项：多文件（F-001）、取消（F-003）、冲突覆盖/跳过/重命名（F-013/F-014）、更改目录与按设备恢复（F-005/F-006）、身份变更拒绝与 UI 不可用 fail-closed（F-010/F-017），以及安装 `cargo-deny` 后的 `cargo deny check`。第二阶段的 Linux/macOS picker 不在本阶段。最终 `v2.0.0` tag 仍需 T-024 发布验收与 `snow 0.10.0`、macOS 真机门；本阶段不 bump 版本、不打 tag。

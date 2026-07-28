@@ -92,6 +92,32 @@ quick-share receive --once --yes
 
 除非提供 `--yes`，否则非交互模式下来自未知设备的传输请求会被拒绝；即使提供 `--yes`，也只能接受一次。第一次按下 Ctrl+C 会保存可恢复状态，第二次中断则强制终止。
 
+### 跨设备远程选择（Windows 桌面）
+
+第一阶段的原生桌面选择器仅在 Windows 上提供。在 Windows 上启动常驻代理，它会在系统托盘运行，并在收到请求时弹出原生窗口：
+
+```powershell
+quick-share agent
+quick-share agent --bind 192.168.1.20 --port 4242
+```
+
+- 代理需要交互式 Windows 桌面会话；没有可用桌面时请求会失败关闭，不会静默继续。
+- 托盘菜单提供“Open Quick Share”和“Exit”；关闭隐藏的宿主窗口不会退出代理。
+- 已配对设备直接进入选择；未配对设备先弹出授权窗口（显示设备名、稳定 ID 和验证码），身份变化的设备默认被拒绝。
+
+Linux 端从命令行请求 Windows 选择要发送的内容，并安全接收回连传输：
+
+```bash
+quick-share receive --request
+quick-share receive --request --peer 192.168.1.20:4242
+quick-share receive --request --peer 192.168.1.20:4242 --output ~/Downloads/received
+```
+
+- 自动发现只会列出协商支持远程选择的 Windows 代理；非交互模式下必须用 `--peer` 指定目标。
+- Windows 上默认使用该设备上次保存的目录，并提供“更改目录”；仅在完整信任身份时才记忆目录。
+- 目标出现同名内容时，Windows 会提示“覆盖 / 跳过 / 重命名”和“仅此项 / 应用到全部”。
+- 回连只连接已认证控制连接观测到的来源 IP 并固定完整远端公钥，且精确校验请求与传输标识。
+
 ### 传统浏览器共享
 
 ```bash

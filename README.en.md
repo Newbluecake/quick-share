@@ -92,6 +92,32 @@ quick-share receive --once --yes
 
 Unknown non-interactive offers are rejected unless `--yes` is supplied, and `--yes` can accept only once. The first Ctrl+C persists resumable state; a second interrupt forces termination.
 
+### Cross-device remote selection (Windows desktop)
+
+The first-phase native picker is provided only on Windows. Start the resident agent on Windows; it runs in the system tray and shows native windows when a request arrives:
+
+```powershell
+quick-share agent
+quick-share agent --bind 192.168.1.20 --port 4242
+```
+
+- The agent requires an interactive Windows desktop session; without an available desktop, requests fail closed rather than silently continuing.
+- The tray menu offers "Open Quick Share" and "Exit"; closing the hidden owner window does not stop the agent.
+- Paired devices go straight to selection; unpaired devices first get an authorization window (device name, stable ID, and verification code), and devices whose identity changed are rejected by default.
+
+From Linux, request that Windows choose the content to send and receive the callback transfer securely:
+
+```bash
+quick-share receive --request
+quick-share receive --request --peer 192.168.1.20:4242
+quick-share receive --request --peer 192.168.1.20:4242 --output ~/Downloads/received
+```
+
+- Auto-discovery lists only agents that negotiated remote selection; non-interactive use must name the target with `--peer`.
+- Windows defaults to that device's last saved directory and offers "Change directory"; the directory is remembered only for a fully trusted identity.
+- On a destination conflict, Windows prompts Overwrite / Skip / Rename and This entry / All remaining.
+- The callback dials only the source IP observed on the authenticated control connection with the pinned complete remote key, and exactly matches the request and transfer identifiers.
+
 ### Traditional browser sharing
 
 ```bash
