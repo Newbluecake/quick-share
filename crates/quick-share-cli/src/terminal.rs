@@ -60,7 +60,7 @@ impl ConsoleTerminal {
         device_id: &quick_share_protocol::DeviceId,
         sas: quick_share_transfer::noise::SasCode,
         assume_yes: bool,
-    ) -> Result<(), AppError> {
+    ) -> Result<bool, AppError> {
         eprintln!(
             "Authenticated receiver: {} ({device_id}), SAS {sas}",
             terminal_safe(peer_name)
@@ -68,7 +68,7 @@ impl ConsoleTerminal {
         if !self.interactive {
             return if assume_yes {
                 eprintln!("Proceeding with explicit --yes under TOFU; the SAS was not compared.");
-                Ok(())
+                Ok(false)
             } else {
                 Err(AppError::ConfirmationRequired(
                     "unknown receiver requires interactive SAS review or --yes for explicit TOFU"
@@ -76,10 +76,12 @@ impl ConsoleTerminal {
                 ))
             };
         }
-        eprint!("Compare the SAS if possible. Continue with this authenticated receiver? [y/N] ");
+        eprint!(
+            "Compare the SAS if possible. Trust this authenticated receiver and continue? [y/N] "
+        );
         io::stderr().flush().map_err(map_io)?;
         match read_line()?.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" => Ok(()),
+            "y" | "yes" => Ok(true),
             _ => Err(AppError::Cancelled),
         }
     }
@@ -334,6 +336,20 @@ mod tests {
         )
         .expect("single peer is routing, not trust confirmation");
         assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn non_interactive_tofu_yes_accepts_once_without_persisting_trust() {
+        let device_id = DeviceId::parse("qs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").expect("device id");
+        let persist = ConsoleTerminal::new(false)
+            .confirm_tofu(
+                "peer",
+                &device_id,
+                quick_share_transfer::noise::SasCode::from_value(123456).expect("sas"),
+                true,
+            )
+            .expect("explicit one-time TOFU");
+        assert!(!persist);
     }
 
     #[test]

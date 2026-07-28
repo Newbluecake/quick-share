@@ -159,12 +159,24 @@ pub(crate) async fn run_remote_receive(
                 "remote agent static identity does not match the pinned key".to_owned(),
             ));
         }
-        TrustStatus::Unknown => terminal.confirm_tofu(
-            &connected.remote_info.device.name,
-            &connected.evidence.remote_device_id,
-            connected.evidence.sas,
-            intent.assume_yes,
-        )?,
+        TrustStatus::Unknown => {
+            let persist = terminal.confirm_tofu(
+                &connected.remote_info.device.name,
+                &connected.evidence.remote_device_id,
+                connected.evidence.sas,
+                intent.assume_yes,
+            )?;
+            if persist {
+                trust
+                    .trust_peer(
+                        connected.evidence.remote_device_id.clone(),
+                        &connected.remote_info.device.name,
+                        connected.evidence.remote_static(),
+                    )
+                    .map_err(|error| AppError::Identity(error.to_string()))?;
+                eprintln!("Receiver identity saved; future connections will not ask again.");
+            }
+        }
     }
     let sender_device_id = connected.evidence.remote_device_id.clone();
     let sender_public_key = connected.evidence.remote_static();

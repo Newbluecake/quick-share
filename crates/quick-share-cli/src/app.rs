@@ -672,12 +672,22 @@ impl DirectSendAdapter for ProductionDirect {
             TrustStatus::Unknown => false,
         };
         if !trusted {
-            self.terminal.confirm_tofu(
+            let persist = self.terminal.confirm_tofu(
                 &connected.remote_info.device.name,
                 &connected.evidence.remote_device_id,
                 connected.evidence.sas,
                 request.assume_yes,
             )?;
+            if persist {
+                self.trust_store
+                    .trust_peer(
+                        connected.evidence.remote_device_id.clone(),
+                        &connected.remote_info.device.name,
+                        connected.evidence.remote_static(),
+                    )
+                    .map_err(|error| AppError::Identity(error.to_string()))?;
+                eprintln!("Receiver identity saved; future connections will not ask again.");
+            }
         }
         eprintln!(
             "Receiver authenticated: {} ({}) via {}",
