@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-31
+
+### Added
+- feat(platform): add custom Windows source chooser
+
+### Fixed
+- fix(transfer): report actionable receiver failures
+- fix(agent): keep successful incoming transfers silent
+- fix(test): exclude invalid portable names from destination property cases
+- fix(release): regenerate the standalone fuzz lockfile
+- fix(installer): clean temporary state before local scope exits
+
 ### Changed
 - Replaced the generic Windows send-source confirmation dialog with a compact Quick Share chooser that supports file/folder icons, light and dark themes, high-DPI rendering, mouse and keyboard navigation, request timeout handling, and the existing native Windows file and folder pickers.
 
@@ -336,7 +348,8 @@ See `docs/migration-v2.md` for command changes, configuration migration, and rol
 - Basename-only file access enforcement
 - No directory listing exposure
 
-[Unreleased]: https://github.com/Newbluecake/quick-share/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/Newbluecake/quick-share/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.2.0
 [2.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.0.0
 [1.0.12]: https://github.com/Newbluecake/quick-share/releases/tag/v1.0.12
