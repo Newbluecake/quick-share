@@ -14,7 +14,7 @@ use quick_share_transfer::{
         ServerSessionOutcome,
     },
     offer::{OfferManager, OfferPolicy, OfferView},
-    receiver::{ReceiverPolicy, ReceiverService},
+    receiver::{ReceiverError, ReceiverPolicy, ReceiverService},
     sender::{
         SendFile, SenderError, SenderPolicy, TextSendPlan, TransferPlan, TransferSender,
         TransportError,
@@ -450,10 +450,15 @@ async fn unicode_and_empty_text_cross_noise_without_a_plaintext_temp_file() {
                 Err(SenderError::Transport(TransportError::Integrity))
             ));
             transport.disconnect().await;
-            assert_eq!(
-                server_task.await.expect("task").expect("server"),
-                ServerSessionOutcome::Disconnected
-            );
+            assert!(matches!(
+                server_task.await.expect("task"),
+                Err(DirectError::ReceiverRequest {
+                    transfer_id: failed,
+                    source: ReceiverError::Store(
+                        quick_share_transfer::StoreError::FinalDigestMismatch { .. }
+                    ),
+                }) if failed == transfer_id.as_uuid().to_string()
+            ));
             assert!(!output.join("quick-share-text.txt").exists());
             continue;
         }

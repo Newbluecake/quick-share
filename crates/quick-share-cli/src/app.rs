@@ -1521,7 +1521,9 @@ fn map_direct(error: DirectError) -> AppError {
         DirectError::Connect(_) | DirectError::ConnectTimeout => {
             AppError::PeerUnavailable(error.to_string())
         }
-        DirectError::Receiver(_) => AppError::Filesystem(error.to_string()),
+        DirectError::Receiver(_) | DirectError::ReceiverRequest { .. } => {
+            AppError::Filesystem(error.to_string())
+        }
         DirectError::Remote(remote) => match remote.code {
             quick_share_protocol::ErrorCode::IntegrityFailed => {
                 AppError::Integrity(remote.to_string())
@@ -1568,7 +1570,7 @@ fn map_sender(error: quick_share_transfer::sender::SenderError) -> AppError {
         SenderError::Transport(
             quick_share_transfer::sender::TransportError::Retryable
             | quick_share_transfer::sender::TransportError::Fatal
-            | quick_share_transfer::sender::TransportError::ResourceLimit,
+            | quick_share_transfer::sender::TransportError::ResourceLimit(_),
         )
         | SenderError::WorkerFailed => AppError::Network(error.to_string()),
         SenderError::InvalidPlan(_) | SenderError::Store(_) => AppError::Usage(error.to_string()),

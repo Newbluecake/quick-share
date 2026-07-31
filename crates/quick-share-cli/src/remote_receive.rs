@@ -500,6 +500,7 @@ fn map_direct(error: DirectError) -> AppError {
         | DirectError::Random
         | DirectError::Offer(_)
         | DirectError::Receiver(_)
+        | DirectError::ReceiverRequest { .. }
         | DirectError::Selection(_)
         | DirectError::ExpectedOffer(_) => AppError::Network(error.to_string()),
     }

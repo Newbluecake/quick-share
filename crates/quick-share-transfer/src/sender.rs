@@ -288,10 +288,8 @@ pub enum TransportError {
     Integrity,
     #[error("remote rejected authorization")]
     Unauthorized,
-    #[error(
-        "remote resource limit was reached; check receiver disk space, output permissions, and concurrency limits"
-    )]
-    ResourceLimit,
+    #[error("remote resource limit was reached: {0}")]
+    ResourceLimit(String),
 }
 
 impl TransportError {

@@ -675,6 +675,7 @@ where
                         .ok_or(DirectError::InvalidResponse)?;
                     let request: TransferStatusRequest =
                         decode_control_frame(&frame, MessageType::TransferStatus)?;
+                    let transfer_id = request.transfer_id;
                     let response = match self.receiver.status(
                         &authenticated_peer,
                         request,
@@ -689,7 +690,10 @@ where
                                 &cancellation,
                             )
                             .await?;
-                            continue;
+                            return Err(DirectError::ReceiverRequest {
+                                transfer_id: transfer_id.as_uuid().to_string(),
+                                source: error,
+                            });
                         }
                     };
                     send_response(
@@ -707,6 +711,7 @@ where
                         .as_ref()
                         .ok_or(DirectError::InvalidResponse)?;
                     let request: ChunkData = decode_control_frame(&frame, MessageType::ChunkData)?;
+                    let transfer_id = request.descriptor.transfer_id;
                     let response = match self.receiver.receive_chunk(
                         &authenticated_peer,
                         frame.request_id,
@@ -722,7 +727,10 @@ where
                                 &cancellation,
                             )
                             .await?;
-                            continue;
+                            return Err(DirectError::ReceiverRequest {
+                                transfer_id: transfer_id.as_uuid().to_string(),
+                                source: error,
+                            });
                         }
                     };
                     if let Some(response) = response {
@@ -758,7 +766,10 @@ where
                                 &cancellation,
                             )
                             .await?;
-                            continue;
+                            return Err(DirectError::ReceiverRequest {
+                                transfer_id: transfer_id.as_uuid().to_string(),
+                                source: error,
+                            });
                         }
                     };
                     send_response(
@@ -798,7 +809,10 @@ where
                                 &cancellation,
                             )
                             .await?;
-                            Some(ServerSessionOutcome::Disconnected)
+                            return Err(DirectError::ReceiverRequest {
+                                transfer_id: transfer_id.as_uuid().to_string(),
+                                source: error,
+                            });
                         }
                     }
                 }
@@ -882,29 +896,68 @@ async fn send_receiver_error(
     error: &ReceiverError,
     cancellation: &CancellationToken,
 ) -> Result<(), DirectError> {
-    let code = match error {
-        ReceiverError::Unauthorized | ReceiverError::Offer(_) => ErrorCode::Unauthorized,
-        ReceiverError::FileStreamLimit | ReceiverError::ReceiveTaskLimit => {
-            ErrorCode::ResourceLimit
+    send_response(
+        session,
+        request_id,
+        MessageType::ProtocolError,
+        &receiver_protocol_error(error),
+        cancellation,
+    )
+    .await
+}
+
+fn receiver_protocol_error(error: &ReceiverError) -> ProtocolError {
+    let (code, message) = match error {
+        ReceiverError::Unauthorized | ReceiverError::Offer(_) => {
+            (ErrorCode::Unauthorized, "request is not authorized")
         }
-        ReceiverError::Store(crate::StoreError::Io(error))
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::StorageFull
-                    | std::io::ErrorKind::QuotaExceeded
-                    | std::io::ErrorKind::FileTooLarge
-                    | std::io::ErrorKind::PermissionDenied
-            ) =>
+        ReceiverError::ReceiveTaskLimit => (
+            ErrorCode::ResourceLimit,
+            "receiver transfer-task limit reached; resume or cancel the existing transfer",
+        ),
+        ReceiverError::FileStreamLimit => (
+            ErrorCode::ResourceLimit,
+            "receiver concurrent file-stream limit reached; retry after active uploads finish",
+        ),
+        ReceiverError::Store(crate::StoreError::Io(error)) | ReceiverError::Io(error)
+            if error.kind() == std::io::ErrorKind::StorageFull =>
         {
-            ErrorCode::ResourceLimit
+            (ErrorCode::ResourceLimit, "receiver storage is full")
         }
-        ReceiverError::NotFound => ErrorCode::NotFound,
+        ReceiverError::Store(crate::StoreError::Io(error)) | ReceiverError::Io(error)
+            if error.kind() == std::io::ErrorKind::QuotaExceeded =>
+        {
+            (
+                ErrorCode::ResourceLimit,
+                "receiver storage quota was exceeded",
+            )
+        }
+        ReceiverError::Store(crate::StoreError::Io(error)) | ReceiverError::Io(error)
+            if error.kind() == std::io::ErrorKind::FileTooLarge =>
+        {
+            (
+                ErrorCode::ResourceLimit,
+                "receiver filesystem rejected the file size",
+            )
+        }
+        ReceiverError::Store(crate::StoreError::Io(error)) | ReceiverError::Io(error)
+            if error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            (
+                ErrorCode::ResourceLimit,
+                "receiver output is not writable or a destination file is in use",
+            )
+        }
+        ReceiverError::NotFound => (ErrorCode::NotFound, "transfer was not found"),
         ReceiverError::Store(
             crate::StoreError::ChunkDigestMismatch { .. }
             | crate::StoreError::ConflictingChunk { .. }
             | crate::StoreError::FinalDigestMismatch { .. }
             | crate::StoreError::InconsistentCommit(_),
-        ) => ErrorCode::IntegrityFailed,
+        ) => (
+            ErrorCode::IntegrityFailed,
+            "transfer integrity verification failed",
+        ),
         ReceiverError::InvalidLimits
         | ReceiverError::InvalidFrame(_)
         | ReceiverError::ManifestChanged
@@ -918,28 +971,16 @@ async fn send_receiver_error(
         | ReceiverError::Terminal(_)
         | ReceiverError::SkippedMetadata
         | ReceiverError::Path(_)
-        | ReceiverError::DestinationPlan(_) => ErrorCode::InvalidMessage,
-        ReceiverError::Store(_) | ReceiverError::Io(_) | ReceiverError::Internal => {
-            ErrorCode::Internal
-        }
+        | ReceiverError::DestinationPlan(_) => (
+            ErrorCode::InvalidMessage,
+            "transfer request is invalid for the current state",
+        ),
+        ReceiverError::Store(_) | ReceiverError::Io(_) | ReceiverError::Internal => (
+            ErrorCode::Internal,
+            "receiver could not complete the operation",
+        ),
     };
-    let message = match code {
-        ErrorCode::Unauthorized => "request is not authorized",
-        ErrorCode::ResourceLimit => "receiver resource limit reached",
-        ErrorCode::NotFound => "transfer was not found",
-        ErrorCode::IntegrityFailed => "transfer integrity verification failed",
-        ErrorCode::InvalidMessage => "transfer request is invalid for the current state",
-        ErrorCode::Internal => "receiver could not complete the operation",
-        ErrorCode::IncompatibleProtocol | ErrorCode::Rejected => "transfer request failed",
-    };
-    send_response(
-        session,
-        request_id,
-        MessageType::ProtocolError,
-        &ProtocolError::new(code, message),
-        cancellation,
-    )
-    .await
+    ProtocolError::new(code, message)
 }
 
 async fn send_response<T: ControlPayload + Sync>(
@@ -1013,7 +1054,7 @@ fn map_transport(error: DirectError) -> TransportError {
         DirectError::Remote(error) => match error.code {
             ErrorCode::IntegrityFailed => TransportError::Integrity,
             ErrorCode::Unauthorized => TransportError::Unauthorized,
-            ErrorCode::ResourceLimit => TransportError::ResourceLimit,
+            ErrorCode::ResourceLimit => TransportError::ResourceLimit(error.message),
             ErrorCode::Rejected => TransportError::Cancelled,
             ErrorCode::IncompatibleProtocol
             | ErrorCode::InvalidMessage
@@ -1056,8 +1097,54 @@ pub enum DirectError {
     Offer(#[from] crate::offer::OfferError),
     #[error("receiver state failed: {0}")]
     Receiver(#[from] ReceiverError),
+    #[error("receiver state failed for transfer {transfer_id}: {source}")]
+    ReceiverRequest {
+        transfer_id: String,
+        #[source]
+        source: ReceiverError,
+    },
     #[error("source selection failed: {0}")]
     Selection(#[from] crate::selection::SelectionError),
     #[error("expected callback offer failed: {0}")]
     ExpectedOffer(#[from] crate::expected_offer::ExpectedOfferError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DirectError, map_transport, receiver_protocol_error};
+    use crate::{StoreError, receiver::ReceiverError, sender::TransportError};
+    use quick_share_protocol::{ErrorCode, ProtocolError};
+    use std::io;
+
+    #[test]
+    fn receiver_resource_errors_expose_safe_actionable_reasons() {
+        let task_limit = receiver_protocol_error(&ReceiverError::ReceiveTaskLimit);
+        assert_eq!(task_limit.code, ErrorCode::ResourceLimit);
+        assert_eq!(
+            task_limit.message,
+            "receiver transfer-task limit reached; resume or cancel the existing transfer"
+        );
+
+        let permission = receiver_protocol_error(&ReceiverError::Store(StoreError::Io(
+            io::Error::from(io::ErrorKind::PermissionDenied),
+        )));
+        assert_eq!(permission.code, ErrorCode::ResourceLimit);
+        assert_eq!(
+            permission.message,
+            "receiver output is not writable or a destination file is in use"
+        );
+    }
+
+    #[test]
+    fn sender_preserves_the_authenticated_remote_resource_reason() {
+        let mapped = map_transport(DirectError::Remote(ProtocolError::new(
+            ErrorCode::ResourceLimit,
+            "receiver transfer-task limit reached; resume or cancel the existing transfer",
+        )));
+        assert!(matches!(
+            mapped,
+            TransportError::ResourceLimit(reason)
+                if reason == "receiver transfer-task limit reached; resume or cancel the existing transfer"
+        ));
+    }
 }
