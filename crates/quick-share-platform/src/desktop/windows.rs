@@ -387,16 +387,7 @@ impl NativeDialogs for WindowsDialogs {
 }
 
 fn quick_share_icon() -> Result<Icon, tray_icon_win::BadIcon> {
-    let mut rgba = Vec::with_capacity(16 * 16 * 4);
-    for y in 0..16 {
-        for x in 0..16 {
-            let accent = (x + y) % 4 < 2;
-            rgba.extend_from_slice(if accent {
-                &[40, 120, 235, 255]
-            } else {
-                &[235, 245, 255, 255]
-            });
-        }
-    }
-    Icon::from_rgba(rgba, 16, 16)
+    const SIZE: u32 = 32;
+    let rgba = super::icon::quick_share_icon_rgba(SIZE);
+    Icon::from_rgba(rgba, SIZE, SIZE)
 }

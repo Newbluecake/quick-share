@@ -256,28 +256,7 @@ impl SourcePicker {
 
 fn quick_share_window_icon() -> Result<WindowIcon, DesktopError> {
     const SIZE: u32 = 32;
-    let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let corner_x = if x < 7 { 7 - x } else { x.saturating_sub(24) };
-            let corner_y = if y < 7 { 7 - y } else { y.saturating_sub(24) };
-            let inside = corner_x * corner_x + corner_y * corner_y <= 49;
-            if !inside {
-                continue;
-            }
-            let arrow_right = (8..=22).contains(&x) && (9..=12).contains(&y)
-                || (18..=24).contains(&x) && y.abs_diff(10) <= x.saturating_sub(18);
-            let arrow_left = (9..=23).contains(&x) && (19..=22).contains(&y)
-                || (7..=13).contains(&x) && y.abs_diff(21) <= 13_u32.saturating_sub(x);
-            let offset = ((y * SIZE + x) * 4) as usize;
-            let color = if arrow_right || arrow_left {
-                [255, 255, 255, 255]
-            } else {
-                [40, 120, 235, 255]
-            };
-            rgba[offset..offset + 4].copy_from_slice(&color);
-        }
-    }
+    let rgba = super::icon::quick_share_icon_rgba(SIZE);
     WindowIcon::from_rgba(rgba, SIZE, SIZE).map_err(|_| DesktopError::Backend)
 }
 

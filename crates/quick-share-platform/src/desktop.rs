@@ -7,6 +7,8 @@ use std::{
 use thiserror::Error;
 
 mod broker;
+#[cfg(windows)]
+mod icon;
 #[cfg(any(windows, test))]
 mod mapping;
 #[cfg(windows)]
