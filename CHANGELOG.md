@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-08-02
+
+### Added
+- feat(platform): add Windows launch-at-login tray toggle
+
+### Fixed
+- fix(platform): unify tray icon with source picker window icon
+
+### Maintenance
+- style(platform): apply rustfmt to icon and autostart modules
+
 ## [2.2.0] - 2026-07-31
 
 ### Added
@@ -348,7 +359,8 @@ See `docs/migration-v2.md` for command changes, configuration migration, and rol
 - Basename-only file access enforcement
 - No directory listing exposure
 
-[Unreleased]: https://github.com/Newbluecake/quick-share/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/Newbluecake/quick-share/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.3.0
 [2.2.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.2.0
 [2.1.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Newbluecake/quick-share/releases/tag/v2.0.0
