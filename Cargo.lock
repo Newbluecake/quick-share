@@ -2600,6 +2600,7 @@ dependencies = [
  "tray-icon-win",
  "windows-permissions",
  "winit",
+ "winreg",
 ]
 
 [[package]]

@@ -13,7 +13,7 @@ use std::{
 };
 use tray_icon_win::{
     Icon, TrayIcon, TrayIconBuilder,
-    menu::{Menu, MenuEvent, MenuId, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem},
 };
 use winit::{
     application::ApplicationHandler,
@@ -128,6 +128,8 @@ struct WindowsApplication {
     tray: Option<TrayIcon>,
     open_id: Option<MenuId>,
     exit_id: Option<MenuId>,
+    autostart_id: Option<MenuId>,
+    autostart_item: Option<CheckMenuItem>,
     menu_handler_installed: bool,
     initialization_failed: bool,
 }
@@ -149,6 +151,8 @@ impl WindowsApplication {
             tray: None,
             open_id: None,
             exit_id: None,
+            autostart_id: None,
+            autostart_item: None,
             menu_handler_installed: false,
             initialization_failed: false,
         }
@@ -166,8 +170,14 @@ impl WindowsApplication {
         );
         let menu = Menu::new();
         let open = MenuItem::new("Open Quick Share", true, None);
+        let autostart = CheckMenuItem::new(
+            "Launch at login",
+            true,
+            super::autostart::is_enabled(),
+            None,
+        );
         let exit = MenuItem::new("Exit", true, None);
-        menu.append_items(&[&open, &exit])
+        menu.append_items(&[&open, &autostart, &exit])
             .map_err(|_| DesktopError::Backend)?;
         let tray = TrayIconBuilder::new()
             .with_tooltip("Quick Share")
@@ -177,6 +187,8 @@ impl WindowsApplication {
             .map_err(|_| DesktopError::Unavailable)?;
         self.open_id = Some(open.id().clone());
         self.exit_id = Some(exit.id().clone());
+        self.autostart_id = Some(autostart.id().clone());
+        self.autostart_item = Some(autostart);
         if !self.menu_handler_installed {
             let proxy = self.proxy.clone();
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -271,6 +283,14 @@ impl ApplicationHandler<UserEvent> for WindowsApplication {
                 let _ = self.tray_sender.try_send(TrayAction::Open);
             }
             UserEvent::Menu(id) if self.exit_id.as_ref() == Some(&id) => self.exit(event_loop),
+            UserEvent::Menu(id) if self.autostart_id.as_ref() == Some(&id) => {
+                // The registry is the source of truth; sync the check mark back to it.
+                let next = !super::autostart::is_enabled();
+                let applied = super::autostart::set_enabled(next).is_ok();
+                if let Some(item) = &self.autostart_item {
+                    item.set_checked(if applied { next } else { !next });
+                }
+            }
             UserEvent::Menu(_) => {}
         }
     }
@@ -310,6 +330,7 @@ impl ApplicationHandler<UserEvent> for WindowsApplication {
             self.menu_handler_installed = false;
         }
         self.tray = None;
+        self.autostart_item = None;
         self.source_picker = None;
         self.pending_source = None;
         self.backend = None;

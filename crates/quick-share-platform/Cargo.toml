@@ -23,6 +23,7 @@ softbuffer.workspace = true
 tiny-skia.workspace = true
 tray-icon-win.workspace = true
 windows-permissions = "0.2.4"
+winreg = "0.55"
 winit.workspace = true
 
 [lints]

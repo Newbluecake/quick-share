@@ -8,6 +8,8 @@ use thiserror::Error;
 
 mod broker;
 #[cfg(windows)]
+mod autostart;
+#[cfg(windows)]
 mod icon;
 #[cfg(any(windows, test))]
 mod mapping;
