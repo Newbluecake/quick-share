@@ -6,9 +6,9 @@ use std::{
 };
 use thiserror::Error;
 
-mod broker;
 #[cfg(windows)]
 mod autostart;
+mod broker;
 #[cfg(windows)]
 mod icon;
 #[cfg(any(windows, test))]

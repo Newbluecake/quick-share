@@ -7,8 +7,7 @@ const VALUE_NAME: &str = "QuickShare";
 
 /// Returns whether the agent is registered to launch at user logon.
 pub(crate) fn is_enabled() -> bool {
-    let key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey(RUN_KEY);
+    let key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).open_subkey(RUN_KEY);
     match key {
         Ok(key) => key.get_value::<String, _>(VALUE_NAME).is_ok(),
         Err(_) => false,

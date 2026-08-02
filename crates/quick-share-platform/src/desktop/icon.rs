@@ -10,8 +10,16 @@ pub(crate) fn quick_share_icon_rgba(size: u32) -> Vec<u8> {
             // Map onto the 32×32 design grid so every icon size stays consistent.
             let dx = x * DESIGN_SIZE / size;
             let dy = y * DESIGN_SIZE / size;
-            let corner_x = if dx < 7 { 7 - dx } else { dx.saturating_sub(24) };
-            let corner_y = if dy < 7 { 7 - dy } else { dy.saturating_sub(24) };
+            let corner_x = if dx < 7 {
+                7 - dx
+            } else {
+                dx.saturating_sub(24)
+            };
+            let corner_y = if dy < 7 {
+                7 - dy
+            } else {
+                dy.saturating_sub(24)
+            };
             let inside = corner_x * corner_x + corner_y * corner_y <= 49;
             if !inside {
                 continue;
