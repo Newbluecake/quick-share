@@ -3,8 +3,8 @@
 use crate::{
     AgentIntent, AppError,
     app::{
-        PreparedPathContent, finalize_path_transfer, load_identity, prepare_path_content,
-        resolve_bind_ip, sender_policy, trust_store,
+        PreparedPathContent, bind_error, finalize_path_transfer, load_identity,
+        prepare_path_content, resolve_bind_ip, sender_policy, trust_store,
     },
     desktop_prompt::{
         AgentReceiver, DesktopOfferPrompt, SourceDirectoryStore, callback_notification,
@@ -299,7 +299,7 @@ pub(crate) async fn run_background(background: AgentBackground) -> Result<(), Ap
     let port = intent.port.unwrap_or(config.network.port);
     let listener = TcpListener::bind(SocketAddr::new(bind_ip, port))
         .await
-        .map_err(|error| AppError::Network(format!("cannot bind desktop agent: {error}")))?;
+        .map_err(|error| bind_error("desktop agent", error))?;
     let address = listener
         .local_addr()
         .map_err(|error| AppError::Network(error.to_string()))?;

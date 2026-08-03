@@ -2,7 +2,7 @@
 
 use crate::{
     AppError, InteractionPolicy, ReceiveIntent,
-    app::{load_identity, resolve_bind_ip, trust_store},
+    app::{bind_error, load_identity, resolve_bind_ip, trust_store},
     configured_discovery::HybridDiscovery,
     orchestration::{ReceiveStartup, ReceiveTerminal, SendTerminal},
     terminal::ConsoleTerminal,
@@ -101,7 +101,7 @@ pub(crate) async fn run_remote_receive(
     let port = intent.port.unwrap_or(config.network.port);
     let listener = TcpListener::bind(SocketAddr::new(bind_ip, port))
         .await
-        .map_err(|error| AppError::Network(format!("cannot bind callback receiver: {error}")))?;
+        .map_err(|error| bind_error("callback receiver", error))?;
     let callback_address = listener
         .local_addr()
         .map_err(|error| AppError::Network(error.to_string()))?;

@@ -1040,7 +1040,7 @@ async fn run_receive(
     let port = intent.port.unwrap_or(config.network.port);
     let listener = TcpListener::bind(SocketAddr::new(bind_ip, port))
         .await
-        .map_err(|error| AppError::Network(format!("cannot bind receiver: {error}")))?;
+        .map_err(|error| bind_error("receiver", error))?;
     let address = listener
         .local_addr()
         .map_err(|error| AppError::Network(error.to_string()))?;
@@ -1344,6 +1344,23 @@ pub(crate) fn resolve_bind_ip(value: &str, config: &AppConfig) -> Result<IpAddr,
         .ok_or_else(|| AppError::Network("no eligible LAN interface is available".to_owned()))
 }
 
+/// Windows socket error raised when a port is denied by the OS, typically because
+/// Hyper-V/WSL/Docker reserved the port range (`netsh` excluded port ranges).
+const WSAEACCES: i32 = 10013;
+
+pub(crate) fn bind_error(context: &str, error: std::io::Error) -> AppError {
+    let mut message = format!("cannot bind {context}: {error}");
+    if error.raw_os_error() == Some(WSAEACCES) {
+        message.push_str(
+            "; the port may be reserved by Windows (Hyper-V/WSL/Docker excluded port range). \
+             Try `--port` with a different value, check `netsh interface ipv4 show \
+             excludedportrange protocol=tcp`, or restart WinNAT as administrator \
+             (`net stop winnat` then `net start winnat`)",
+        );
+    }
+    AppError::Network(message)
+}
+
 fn looks_like_file(path: &Path) -> bool {
     path.is_file() || (!path.exists() && path.extension().is_some())
 }
@@ -1579,10 +1596,34 @@ fn map_sender(error: quick_share_transfer::sender::SenderError) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_file, parse_web_duration, set_config_value};
-    use crate::ConfigKey;
+    use super::{bind_error, looks_like_file, parse_web_duration, set_config_value};
+    use crate::{AppError, ConfigKey};
     use quick_share_core::config::AppConfig;
-    use std::fs;
+    use std::{fs, io::Error as IoError};
+
+    #[test]
+    fn bind_error_explains_windows_port_reservation() {
+        let error = bind_error(
+            "desktop agent",
+            IoError::from_raw_os_error(super::WSAEACCES),
+        );
+        let AppError::Network(message) = error else {
+            panic!("bind failures must map to network errors");
+        };
+        assert!(message.contains("cannot bind desktop agent"));
+        assert!(message.contains("--port"));
+        assert!(message.contains("winnat"));
+    }
+
+    #[test]
+    fn bind_error_keeps_plain_failures_unchanged() {
+        let error = bind_error("receiver", IoError::from_raw_os_error(10048));
+        let AppError::Network(message) = error else {
+            panic!("bind failures must map to network errors");
+        };
+        assert!(message.contains("cannot bind receiver"));
+        assert!(!message.contains("winnat"));
+    }
 
     #[test]
     fn receive_output_classification_is_deterministic() {
