@@ -563,4 +563,8 @@ async fn global_task_limit_resume_original_root_plan_update_and_cleanup_fail_clo
             .join(first.transfer_id.as_uuid().to_string())
             .exists()
     );
+    assert!(
+        !root_a.join(".quick-share-staging").exists(),
+        "staging root must be removed with the last transfer"
+    );
 }

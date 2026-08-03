@@ -248,13 +248,23 @@ impl TransferStore {
         fs::create_dir_all(&output_root)?;
         let staging_root = prepare_staging_root(&output_root)?;
         let staging_path = staging_root.join(transfer_id.as_uuid().to_string());
-        fs::create_dir(&staging_path).map_err(|error| {
-            if error.kind() == io::ErrorKind::AlreadyExists {
-                StoreError::AlreadyExists(transfer_id)
-            } else {
-                StoreError::Io(error)
+        for attempt in 0..2 {
+            match fs::create_dir(&staging_path) {
+                Ok(()) => break,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(StoreError::AlreadyExists(transfer_id));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if attempt == 1 {
+                        return Err(StoreError::Io(error));
+                    }
+                    // An empty staging root may have been removed by a concurrent
+                    // cleanup after we prepared it; recreate it and retry once.
+                    prepare_staging_root(&output_root)?;
+                }
+                Err(error) => return Err(StoreError::Io(error)),
             }
-        })?;
+        }
         let files_path = staging_path.join("files");
         fs::create_dir(&files_path)?;
 
@@ -314,8 +324,8 @@ impl TransferStore {
         expected_manifest_digest: Option<[u8; 32]>,
     ) -> Result<Self, StoreError> {
         let output_root = output_root.as_ref().to_path_buf();
-        let staging_path =
-            prepare_staging_root(&output_root)?.join(transfer_id.as_uuid().to_string());
+        let staging_path = staging_root_checked(&output_root)?
+            .join(transfer_id.as_uuid().to_string());
         let manifest: StoreManifest = read_json(staging_path.join("manifest.json"))?;
         let journal: ResumeJournal = read_json(staging_path.join("state.json"))?;
         if manifest.version != STORE_VERSION
@@ -1230,10 +1240,16 @@ impl TransferStore {
         Ok(fs::metadata(self.part_path(entry_id))?)
     }
 
-    /// Lists recoverable transfer IDs without deleting any state.
+    /// Lists recoverable transfer IDs without creating or deleting any state.
     pub fn list_staging(output_root: impl AsRef<Path>) -> Result<Vec<TransferId>, StoreError> {
-        let root = prepare_staging_root(output_root.as_ref())?;
         let mut transfers = Vec::new();
+        let root = match staging_root_checked(output_root.as_ref()) {
+            Ok(root) => root,
+            Err(StoreError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(transfers);
+            }
+            Err(error) => return Err(error),
+        };
         for entry in fs::read_dir(root)? {
             let entry = entry?;
             if !entry.file_type()?.is_dir() {
@@ -1250,27 +1266,32 @@ impl TransferStore {
     }
 
     /// Explicitly discards resumable staging after local/authorized cancellation.
+    /// The now-empty staging root is removed as well.
     pub fn discard(self) -> Result<(), StoreError> {
         fs::remove_dir_all(self.staging_path)?;
+        remove_empty_staging_root(&self.output_root);
         Ok(())
     }
 
-    /// Explicit local cleanup for a listed inactive staging transfer.
+    /// Explicit local cleanup for a listed inactive staging transfer. Removes the
+    /// staging root too once no transfer subdirectory remains.
     pub fn discard_staging(
         output_root: impl AsRef<Path>,
         transfer_id: TransferId,
     ) -> Result<(), StoreError> {
-        let staging =
-            prepare_staging_root(output_root.as_ref())?.join(transfer_id.as_uuid().to_string());
+        let staging = staging_root_checked(output_root.as_ref())?
+            .join(transfer_id.as_uuid().to_string());
         let metadata = fs::symlink_metadata(&staging)?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(StoreError::UnsafeStagingRoot(staging));
         }
         fs::remove_dir_all(staging)?;
+        remove_empty_staging_root(output_root.as_ref());
         Ok(())
     }
 
-    /// Removes staging only after every entry is committed or explicitly skipped.
+    /// Removes staging only after every entry is committed or explicitly skipped,
+    /// including the staging root itself once no transfer subdirectory remains.
     pub fn cleanup_if_complete(self) -> Result<bool, StoreError> {
         let complete = self.journal.entries.iter().all(|entry| {
             matches!(
@@ -1285,6 +1306,7 @@ impl TransferStore {
         });
         if complete {
             fs::remove_dir_all(self.staging_path)?;
+            remove_empty_staging_root(&self.output_root);
         }
         Ok(complete)
     }
@@ -1522,6 +1544,26 @@ fn prepare_staging_root(output_root: &Path) -> Result<PathBuf, StoreError> {
         Err(error) => return Err(StoreError::Io(error)),
     }
     Ok(root)
+}
+
+/// Resolves and validates the staging root without creating it.
+fn staging_root_checked(output_root: &Path) -> Result<PathBuf, StoreError> {
+    let root = output_root.join(STAGING_DIRECTORY);
+    match fs::symlink_metadata(&root) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            Err(StoreError::UnsafeStagingRoot(root))
+        }
+        Ok(_) => Ok(root),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(StoreError::Io(error)),
+        Err(error) => Err(StoreError::Io(error)),
+    }
+}
+
+/// Best-effort removal of the staging root once no transfer subdirectory remains.
+/// Only ever removes an empty directory; the root is lazily recreated by
+/// `prepare_staging_root` on the next accepted transfer, so this is always safe.
+fn remove_empty_staging_root(output_root: &Path) {
+    let _ = fs::remove_dir(output_root.join(STAGING_DIRECTORY));
 }
 
 fn path_relative_to_root(root: &Path, destination: &Path) -> Result<RelativePath, StoreError> {

@@ -927,3 +927,93 @@ fn full_digest_mismatch_keeps_part_file_and_final_hidden() {
     assert!(!root.path().join("bad.bin").exists());
     assert!(store.part_metadata(entry_id()).is_ok());
 }
+
+#[test]
+fn discard_removes_the_staging_root_after_the_last_transfer() {
+    let root = tempdir().expect("output root");
+    let spec = StagedFile::new(
+        entry_id(),
+        RelativePath::parse("one.bin").expect("relative"),
+        1,
+        CHUNK_SIZE,
+        digest(b"x"),
+    )
+    .expect("staged file");
+    let first = TransferStore::create(root.path(), transfer_id(), sender_id(), vec![spec.clone()])
+        .expect("store");
+    assert!(root.path().join(".quick-share-staging").is_dir());
+    first.discard().expect("discard");
+    assert!(
+        !root.path().join(".quick-share-staging").exists(),
+        "staging root must be removed with the last transfer"
+    );
+}
+
+#[test]
+fn staging_root_survives_until_every_transfer_is_cleaned() {
+    let root = tempdir().expect("output root");
+    let spec = StagedFile::new(
+        entry_id(),
+        RelativePath::parse("one.bin").expect("relative"),
+        1,
+        CHUNK_SIZE,
+        digest(b"x"),
+    )
+    .expect("staged file");
+    let first = TransferStore::create(root.path(), transfer_id(), sender_id(), vec![spec.clone()])
+        .expect("first store");
+    let second = TransferStore::create(root.path(), transfer_id(), sender_id(), vec![spec])
+        .expect("second store");
+    first.discard().expect("discard first");
+    assert!(
+        root.path().join(".quick-share-staging").is_dir(),
+        "staging root must remain while another transfer is still staged"
+    );
+    second.discard().expect("discard second");
+    assert!(
+        !root.path().join(".quick-share-staging").exists(),
+        "staging root must be removed after every transfer is cleaned"
+    );
+}
+
+#[test]
+fn cleanup_if_complete_removes_the_staging_root() {
+    let root = tempdir().expect("output root");
+    let payload = vec![0x5a; 3];
+    let spec = StagedFile::new(
+        entry_id(),
+        RelativePath::parse("done.bin").expect("relative"),
+        payload.len() as u64,
+        CHUNK_SIZE,
+        digest(&payload),
+    )
+    .expect("staged file");
+    let id = transfer_id();
+    let mut store =
+        TransferStore::create(root.path(), id, sender_id(), vec![spec]).expect("store");
+    store
+        .write_chunk(entry_id(), &descriptor(id, 0, &payload), &payload, FaultPoint::None)
+        .expect("chunk");
+    store
+        .commit_file(entry_id(), ConflictPolicy::Error, FaultPoint::None)
+        .expect("commit");
+    assert!(store.cleanup_if_complete().expect("cleanup"));
+    assert!(
+        !root.path().join(".quick-share-staging").exists(),
+        "staging root must be removed after a fully committed transfer is cleaned"
+    );
+}
+
+#[test]
+fn list_staging_does_not_recreate_a_missing_staging_root() {
+    let root = tempdir().expect("output root");
+    assert!(
+        TransferStore::list_staging(root.path())
+            .expect("staging list")
+            .is_empty()
+    );
+    assert!(
+        !root.path().join(".quick-share-staging").exists(),
+        "listing must not create the staging root"
+    );
+}
