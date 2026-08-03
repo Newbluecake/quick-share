@@ -989,10 +989,14 @@ fn cleanup_if_complete_removes_the_staging_root() {
     )
     .expect("staged file");
     let id = transfer_id();
-    let mut store =
-        TransferStore::create(root.path(), id, sender_id(), vec![spec]).expect("store");
+    let mut store = TransferStore::create(root.path(), id, sender_id(), vec![spec]).expect("store");
     store
-        .write_chunk(entry_id(), &descriptor(id, 0, &payload), &payload, FaultPoint::None)
+        .write_chunk(
+            entry_id(),
+            &descriptor(id, 0, &payload),
+            &payload,
+            FaultPoint::None,
+        )
         .expect("chunk");
     store
         .commit_file(entry_id(), ConflictPolicy::Error, FaultPoint::None)

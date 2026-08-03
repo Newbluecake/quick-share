@@ -324,8 +324,8 @@ impl TransferStore {
         expected_manifest_digest: Option<[u8; 32]>,
     ) -> Result<Self, StoreError> {
         let output_root = output_root.as_ref().to_path_buf();
-        let staging_path = staging_root_checked(&output_root)?
-            .join(transfer_id.as_uuid().to_string());
+        let staging_path =
+            staging_root_checked(&output_root)?.join(transfer_id.as_uuid().to_string());
         let manifest: StoreManifest = read_json(staging_path.join("manifest.json"))?;
         let journal: ResumeJournal = read_json(staging_path.join("state.json"))?;
         if manifest.version != STORE_VERSION
@@ -1279,8 +1279,8 @@ impl TransferStore {
         output_root: impl AsRef<Path>,
         transfer_id: TransferId,
     ) -> Result<(), StoreError> {
-        let staging = staging_root_checked(output_root.as_ref())?
-            .join(transfer_id.as_uuid().to_string());
+        let staging =
+            staging_root_checked(output_root.as_ref())?.join(transfer_id.as_uuid().to_string());
         let metadata = fs::symlink_metadata(&staging)?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(StoreError::UnsafeStagingRoot(staging));
